@@ -37,10 +37,23 @@ final class HoverController: NSResponder {
 
     deinit { monitors.forEach(NSEvent.removeMonitor) }
 
+    private static let debug = UserDefaults.standard.bool(forKey: "debugHover")
+    private var lastLog = Date.distantPast
+
+    private func log(_ msg: @autoclosure () -> String) {
+        guard Self.debug else { return }
+        lastLog = Date()
+        let line = "\(Date()) \(msg())\n"
+        let url = homeDir.appendingPathComponent("Library/Logs/Headroom-hover.log")
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
+        else { try? line.write(to: url, atomically: true, encoding: .utf8) }
+    }
+
     private func update() {
-        guard let button, let window = button.window, let image = button.image else { return }
+        guard let button, let window = button.window, let image = button.image else { log("no button/window/image"); return }
         let mouse = NSEvent.mouseLocation
         let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        log("mouse \(mouse) in \(frame.contains(mouse)) suppressed \(suppressed()) current \(String(describing: current))")
         guard frame.contains(mouse), !suppressed() else {
             if current != nil { hide() }
             return
@@ -68,34 +81,33 @@ final class HoverController: NSResponder {
         timer = nil
         panel?.orderOut(nil)
         // Drop the SwiftUI tree so a hidden panel does not keep re-rendering on every Store update.
-        panel?.contentView = nil
+        panel?.contentViewController = nil
     }
 
     private func show(_ kind: SegmentKind) {
+        log("show \(kind)")
         model.kind = kind
         sampler.reset()
         model.consumers = sampler.top(kind)
-        timer?.invalidate()
-        if [.cpu, .gpu, .battery, .memory].contains(kind) {
-            // First rate sample after 0.5s, then refresh every second while visible.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self, self.current == kind else { return }
-                self.model.consumers = self.sampler.top(kind)
-            }
-            timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                self.model.consumers = self.sampler.top(kind)
-            }
-        }
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        if panel.contentView == nil {
-            let host = NSHostingView(rootView: HoverView(model: model, store: store))
-            host.sizingOptions = .preferredContentSize
-            panel.contentView = host
+        if panel.contentViewController == nil {
+            panel.contentViewController = NSHostingController(rootView: HoverView(model: model, store: store))
         }
         position(panel, for: kind)
+        timer?.invalidate()
+        if [.cpu, .gpu, .battery, .memory].contains(kind) {
+            // First rate sample after 0.5s, then refresh while visible; the panel resizes as rows change.
+            let refresh = { [weak self] in
+                guard let self, self.current == kind, let panel = self.panel else { return }
+                self.model.consumers = self.sampler.top(kind)
+                self.position(panel, for: kind)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: refresh)
+            timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in refresh() }
+        }
         panel.orderFrontRegardless()
+        log("panel frame \(panel.frame) visible \(panel.isVisible)")
     }
 
     private func makePanel() -> NSPanel {
@@ -113,8 +125,9 @@ final class HoverController: NSResponder {
     private func position(_ panel: NSPanel, for kind: SegmentKind) {
         guard let button, let window = button.window, let image = button.image,
               let range = StatusRenderer.lastSegments.first(where: { $0.kind == kind })?.range else { return }
-        panel.contentView?.layoutSubtreeIfNeeded()
-        let size = panel.contentView?.fittingSize ?? NSSize(width: 240, height: 120)
+        // Measure the SwiftUI content directly; a hosting view reports no fitting size before its first layout.
+        guard let host = panel.contentViewController as? NSHostingController<HoverView> else { return }
+        let size = host.sizeThatFits(in: NSSize(width: 240, height: 1000))
         let originX = (button.bounds.width - image.size.width) / 2 + range.lowerBound
         let inWindow = button.convert(NSPoint(x: originX, y: 0), to: nil)
         let screenPoint = window.convertPoint(toScreen: inWindow)
