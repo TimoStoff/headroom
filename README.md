@@ -1,7 +1,5 @@
 # Headroom
 
-<a href="https://buymeacoffee.com/sandrich"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=flat&logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
-
 A tiny macOS menu bar app that shows how much headroom you have left: on your machine (CPU, GPU, memory, battery) and on your AI coding plans (Claude Code and Grok).
 
 One compact, native-looking item in the menu bar. Click it for a dashboard with live graphs; hover an item to see what is using it.
@@ -90,10 +88,6 @@ Source layout (`Sources/Headroom`):
 - `Ledger.swift`: token ledger, pricing, summaries
 - `StatusRenderer.swift`: draws the menu bar strip
 - `PopoverView.swift`, `Hover.swift`: SwiftUI dashboard and hover panels
-
-## Support
-
-If Headroom saves you a trip to Activity Monitor or a surprise rate limit, you can [buy me a coffee](https://buymeacoffee.com/sandrich).
 
 ## License
 
