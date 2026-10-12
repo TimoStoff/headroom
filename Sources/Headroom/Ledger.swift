@@ -302,33 +302,27 @@ final class Ledger {
     }
 
     /// Reads complete lines from `offset` and returns the new offset (just past the last newline).
+    /// The file is memory-mapped, so even multi-hundred-megabyte transcripts are not copied into memory.
     private func ingestClaudeFile(_ path: String, from offset: UInt64) -> UInt64 {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return offset }
-        defer { try? fh.close() }
-        do { try fh.seek(toOffset: offset) } catch { return offset }
-
-        var consumed = offset
-        var carry = Data()
-        while true {
-            guard let chunk = try? fh.read(upToCount: 8 << 20), !chunk.isEmpty else { break }
-            carry.append(chunk)
-            let used = autoreleasepool { carry.withUnsafeBytes { raw -> Int in
-                guard let base = raw.baseAddress else { return 0 }
-                var start = 0
-                let n = raw.count
-                while start < n, let nl = memchr(base + start, 0x0A, n - start) {
-                    let end = base.distance(to: UnsafeRawPointer(nl))
-                    if end > start, memmem(base + start, end - start, usageNeedle, usageNeedle.count) != nil {
-                        ingestClaudeLine(Data(bytes: base + start, count: end - start))
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped),
+              UInt64(data.count) > offset else { return offset }
+        let consumed = data.withUnsafeBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return Int(offset) }
+            let n = raw.count
+            var start = Int(offset)
+            while start < n, let nl = memchr(base + start, 0x0A, n - start) {
+                let end = base.distance(to: UnsafeRawPointer(nl))
+                if end > start, memmem(base + start, end - start, usageNeedle, usageNeedle.count) != nil {
+                    autoreleasepool {
+                        ingestClaudeLine(Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: base + start),
+                                              count: end - start, deallocator: .none))
                     }
-                    start = end + 1
                 }
-                return start
-            } }
-            consumed += UInt64(used)
-            carry.removeSubrange(0..<used)
+                start = end + 1
+            }
+            return start
         }
-        return consumed
+        return UInt64(consumed)
     }
 
     private func ingestClaudeLine(_ line: Data) {
