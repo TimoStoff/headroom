@@ -6,6 +6,8 @@ A tiny macOS menu bar app that shows how much headroom you have left: on your ma
 
 One compact, native-looking item in the menu bar. Click it for a dashboard with live graphs; hover an item to see what is using it.
 
+<p align="center"><img src="docs/screenshot.png" alt="Headroom menu bar item and dashboard" width="720"></p>
+
 ## Features
 
 **Menu bar**
