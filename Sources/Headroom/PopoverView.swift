@@ -238,8 +238,10 @@ struct SystemGrid: View {
                            subtitle: store.cpu.map { "usr \(Fmt.pct($0.user))  sys \(Fmt.pct($0.system))" } ?? " ") {
                     CoreBars(cores: store.cpu?.cores ?? [])
                 }
+                .topConsumersOnHover(.cpu, title: "TOP CPU")
                 MetricCard(title: "GPU", icon: "cube.transparent", tint: .gpu, value: store.gpu, history: store.gpuHistory,
                            subtitle: "Device utilization") { EmptyView() }
+                    .topConsumersOnHover(.gpu, title: "TOP GPU")
             }
             GridRow {
                 MetricCard(title: "Memory", icon: "memorychip", tint: memTint, value: store.memory?.percent,
@@ -254,7 +256,9 @@ struct SystemGrid: View {
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                 }
+                .topConsumersOnHover(.memory, title: "TOP MEMORY")
                 BatteryCard(battery: store.battery)
+                    .topConsumersOnHover(.battery, title: "ENERGY SHARE")
             }
         }
     }

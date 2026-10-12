@@ -30,7 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.action = #selector(togglePopover)
             button.imagePosition = .imageOnly
             hover = HoverController(store: store, button: button)
-            hover?.suppressed = { [weak self] in self?.popover.isShown ?? false }
         }
         popover.behavior = .transient
         popover.animates = true

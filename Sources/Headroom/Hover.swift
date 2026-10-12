@@ -16,7 +16,6 @@ final class HoverController: NSResponder {
     private var timer: Timer?
     private var pending: DispatchWorkItem?
     private var current: SegmentKind?
-    var suppressed: () -> Bool = { false }
     private var monitors: [Any] = []
 
     init(store: Store, button: NSStatusBarButton) {
@@ -53,8 +52,8 @@ final class HoverController: NSResponder {
         guard let button, let window = button.window, let image = button.image else { log("no button/window/image"); return }
         let mouse = NSEvent.mouseLocation
         let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
-        log("mouse \(mouse) in \(frame.contains(mouse)) suppressed \(suppressed()) current \(String(describing: current))")
-        guard frame.contains(mouse), !suppressed() else {
+        log("mouse \(mouse) in \(frame.contains(mouse)) current \(String(describing: current))")
+        guard frame.contains(mouse) else {
             if current != nil { hide() }
             return
         }
@@ -172,12 +171,34 @@ struct HoverView: View {
         }
     }
 
-    @ViewBuilder private var consumers: some View {
-        if model.consumers.isEmpty {
+    private var consumers: some View { ConsumerRows(consumers: model.consumers) }
+
+    private func limits(_ entries: [LimitEntry], error: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(entries) { e in
+                HStack {
+                    Text(e.name)
+                    Spacer()
+                    Text(Fmt.pct(e.percent)).monospacedDigit().fontWeight(.semibold)
+                    Text(Fmt.until(e.resetsAt)).monospacedDigit().foregroundStyle(.secondary).frame(width: 52, alignment: .trailing)
+                }
+                .font(.system(size: 11))
+            }
+            if let error { Text(error).font(.system(size: 10)).foregroundStyle(.orange) }
+        }
+    }
+}
+
+/// Top-consumer rows with a relative bar under each, shared by the menu bar and dashboard hovers.
+struct ConsumerRows: View {
+    let consumers: [Consumer]
+
+    var body: some View {
+        if consumers.isEmpty {
             Text("Sampling...").font(.system(size: 11)).foregroundStyle(.secondary)
         } else {
-            let maxValue = model.consumers.map(\.value).max() ?? 1
-            ForEach(model.consumers) { c in
+            let maxValue = consumers.map(\.value).max() ?? 1
+            ForEach(consumers) { c in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text(c.name).lineLimit(1).truncationMode(.middle)
@@ -194,19 +215,67 @@ struct HoverView: View {
             }
         }
     }
+}
 
-    private func limits(_ entries: [LimitEntry], error: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(entries) { e in
-                HStack {
-                    Text(e.name)
-                    Spacer()
-                    Text(Fmt.pct(e.percent)).monospacedDigit().fontWeight(.semibold)
-                    Text(Fmt.until(e.resetsAt)).monospacedDigit().foregroundStyle(.secondary).frame(width: 52, alignment: .trailing)
-                }
-                .font(.system(size: 11))
-            }
-            if let error { Text(error).font(.system(size: 10)).foregroundStyle(.orange) }
+/// Live top-consumer sampling for one metric while a dashboard card is hovered.
+final class LiveConsumers: ObservableObject {
+    @Published var consumers: [Consumer] = []
+    private let sampler = ConsumerSampler()
+    private var timer: Timer?
+
+    func start(_ kind: SegmentKind) {
+        stop()
+        sampler.reset()
+        consumers = sampler.top(kind)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, self.timer != nil else { return }
+            self.consumers = self.sampler.top(kind)
         }
+        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.consumers = self.sampler.top(kind)
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+}
+
+private struct TopConsumersOnHover: ViewModifier {
+    let kind: SegmentKind
+    let title: String
+    @State private var hovering = false
+    @State private var shown = false
+    @StateObject private var live = LiveConsumers()
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                hovering = inside
+                if inside {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { if hovering { shown = true } }
+                } else {
+                    shown = false
+                }
+            }
+            .popover(isPresented: $shown, arrowEdge: .leading) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title).font(.system(size: 10, weight: .bold)).tracking(0.5).foregroundStyle(.secondary)
+                    ConsumerRows(consumers: live.consumers)
+                }
+                .padding(10)
+                .frame(width: 240, alignment: .leading)
+                .onAppear { live.start(kind) }
+                .onDisappear { live.stop() }
+            }
+    }
+}
+
+extension View {
+    /// Shows the top apps for `kind` in a small popover while the pointer rests on this view.
+    func topConsumersOnHover(_ kind: SegmentKind, title: String) -> some View {
+        modifier(TopConsumersOnHover(kind: kind, title: title))
     }
 }
