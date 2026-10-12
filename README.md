@@ -34,12 +34,23 @@ Providers you do not use are hidden automatically.
 - Optional: [Claude Code](https://claude.com/claude-code) signed in with a Claude subscription
 - Optional: the [Grok CLI](https://x.ai/cli) signed in (`grok login`)
 
-## Build and install
+## Install
+
+1. Download the latest **Headroom-x.y.dmg** from [Releases](https://github.com/sandrich/headroom/releases/latest).
+2. Open it and drag **Headroom** onto **Applications**.
+3. Launch Headroom. It lives in the menu bar, not the Dock.
+
+Headroom is not notarized by Apple yet, so macOS blocks the first launch once. Open **System Settings > Privacy & Security** and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/Headroom.app`.
+
+## Build from source
 
 ```bash
 ./build.sh            # builds build/Headroom.app
 ./build.sh install    # copies it to /Applications and launches it
+./build.sh dmg        # packages build/Headroom-<version>.dmg
 ```
+
+Builds are universal (Apple Silicon and Intel). To publish a release, bump `CFBundleShortVersionString` in `Resources/Info.plist`, then push a matching tag such as `v1.1`; the release workflow builds the DMG and attaches it.
 
 Headroom registers itself as a login item on first launch. Turn that off under Settings in the dashboard footer.
 
@@ -88,6 +99,8 @@ Source layout (`Sources/Headroom`):
 - `Ledger.swift`: token ledger, pricing, summaries
 - `StatusRenderer.swift`: draws the menu bar strip
 - `PopoverView.swift`, `Hover.swift`: SwiftUI dashboard and hover panels
+
+`scripts/make-icon.swift` regenerates `Resources/AppIcon.icns`.
 
 ## License
 
