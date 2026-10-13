@@ -1,3 +1,13 @@
+<p align="center"><img src="docs/banner.png" alt="Headroom" width="100%"></p>
+
+<p align="center">
+  <a href="https://github.com/sandrich/headroom/releases/latest"><img src="https://img.shields.io/github/v/release/sandrich/headroom?label=release" alt="Latest release"></a>
+  <a href="https://github.com/sandrich/headroom/actions/workflows/test.yml"><img src="https://github.com/sandrich/headroom/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple" alt="macOS 14 or newer">
+  <img src="https://img.shields.io/badge/Swift-5.9%2B-F05138?logo=swift&logoColor=white" alt="Swift 5.9 or newer">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/sandrich/headroom" alt="MIT license"></a>
+</p>
+
 # Headroom
 
 A tiny macOS menu bar app that shows how much headroom you have left: on your machine (CPU, GPU, memory, battery) and on your AI coding plans (Claude Code and Grok).
@@ -94,6 +104,7 @@ The Claude and Grok usage endpoints are not public APIs. They may change without
 
 ```bash
 swift build                                     # debug build
+swift test                                      # unit tests (Swift Testing)
 .build/release/Headroom --snapshot /tmp/shots   # renders the menu bar strip and dashboard to PNGs, then exits
 ```
 
@@ -106,8 +117,11 @@ Source layout (`Sources/Headroom`):
 - `Ledger.swift`: token ledger, pricing, summaries
 - `StatusRenderer.swift`: draws the menu bar strip
 - `PopoverView.swift`, `Hover.swift`: SwiftUI dashboard and hover panels
+- `KeepAwake.swift`: keep awake power assertion
 
-`scripts/make-icon.swift` regenerates `Resources/AppIcon.icns`.
+`scripts/make-icon.swift` regenerates `Resources/AppIcon.icns`, `scripts/make-banner.swift` regenerates `docs/banner.png`.
+
+Tests live in `Tests/HeadroomTests` and run on every push and pull request.
 
 ## License
 
