@@ -73,7 +73,9 @@ struct CardHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: icon).foregroundStyle(tint).font(.system(size: 11, weight: .semibold))
+            // Never wrap the title; in the narrow metric cards the big number next to it gives way instead.
             Text(title.uppercased()).font(.system(size: 10, weight: .bold)).tracking(0.6).foregroundStyle(.secondary)
+                .lineLimit(1).fixedSize()
             Spacer(minLength: 4)
             if let trailing {
                 Text(trailing).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
@@ -88,7 +90,9 @@ struct BigNumber: View {
     let text: String
     var color: Color = .primary
     var body: some View {
+        // Laid out before the card title and scaled down only when "BATTERY 100%" would not fit.
         Text(text).font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
+            .lineLimit(1).minimumScaleFactor(0.75).layoutPriority(1)
             .foregroundStyle(color).contentTransition(.numericText())
     }
 }
@@ -292,7 +296,7 @@ struct MetricCard<Extra: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
                 CardHeader(title: title, icon: icon, tint: tint)
                 BigNumber(text: Fmt.pct(value))
             }
@@ -327,7 +331,7 @@ struct BatteryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
                 CardHeader(title: "Battery", icon: icon, tint: .battery)
                 BigNumber(text: Fmt.pct(battery?.percent), color: low ? .red : .primary)
             }
