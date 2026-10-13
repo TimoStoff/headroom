@@ -1,25 +1,38 @@
 name: Release
 
-# Push a tag like v1.1 (matching CFBundleShortVersionString in Resources/Info.plist)
-# to build a universal DMG and publish it as a GitHub release.
+# Builds a universal DMG and attaches it to the GitHub release. Either:
+#   - publish a release in the GitHub UI (or `gh release create v1.1`), or
+#   - push a tag like v1.1, which creates the release.
+# The tag must match CFBundleShortVersionString in Resources/Info.plist.
 on:
+  release:
+    types: [published]
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
 
+# A release created in the UI also creates its tag; run once per tag.
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref_name }}
+
 jobs:
   release:
     runs-on: macos-15
+    env:
+      TAG: ${{ github.event.release.tag_name || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref_name }}
 
       - name: Check tag matches app version
         run: |
           version=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Resources/Info.plist)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match Info.plist version $version"
+          if [ "v$version" != "$TAG" ]; then
+            echo "Tag $TAG does not match Info.plist version $version"
             exit 1
           fi
 
@@ -27,9 +40,15 @@ jobs:
         run: ./build.sh dmg
 
       - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" build/Headroom-*.dmg \
-            --title "Headroom ${GITHUB_REF_NAME#v}" \
-            --notes-file .github/release-notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" build/Headroom-*.dmg --clobber
+            # Keep notes written in the UI; fill in the install notes only if left empty.
+            if [ -z "$(gh release view "$TAG" --json body -q .body)" ]; then
+              gh release edit "$TAG" --notes-file .github/release-notes.md
+            fi
+          else
+            gh release create "$TAG" build/Headroom-*.dmg \
+              --title "Headroom ${TAG#v}" \
+              --notes-file .github/release-notes.md
+          fi
