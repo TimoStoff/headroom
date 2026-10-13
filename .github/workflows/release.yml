@@ -4,29 +4,37 @@ name: Release
 #   - publish a release in the GitHub UI (or `gh release create v1.1`), or
 #   - push a tag like v1.1, which creates the release.
 # The tag must match CFBundleShortVersionString in Resources/Info.plist.
+# Release notes are generated from the commits since the previous tag, unless written when publishing.
+# Run manually with a tag to rebuild an existing release and regenerate its notes.
 on:
   release:
     types: [published]
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to rebuild, for example v1.1
+        required: true
 
 permissions:
   contents: write
 
 # A release created in the UI also creates its tag; run once per tag.
 concurrency:
-  group: release-${{ github.event.release.tag_name || github.ref_name }}
+  group: release-${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
 
 jobs:
   release:
     runs-on: macos-15
     env:
-      TAG: ${{ github.event.release.tag_name || github.ref_name }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.release.tag_name || github.ref_name }}
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+          fetch-depth: 0
 
       - name: Check tag matches app version
         run: |
@@ -39,16 +47,30 @@ jobs:
       - name: Build DMG
         run: ./build.sh dmg
 
+      - name: Write release notes
+        run: |
+          prev=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          {
+            echo "## What's new"
+            echo
+            git log --no-merges --pretty='- %s' "${prev:+$prev..}$TAG" | grep -vE '^- (Bump version|Merge )' || true
+            echo
+            if [ -n "$prev" ]; then
+              echo "**Full changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$prev...$TAG"
+              echo
+            fi
+            echo "Universal build for Apple Silicon and Intel, macOS 14 or newer. Not notarized yet: on first launch, allow it under System Settings > Privacy & Security > Open Anyway."
+          } > build/notes.md
+          cat build/notes.md
+
       - name: Publish release
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" build/Headroom-*.dmg --clobber
-            # Keep notes written in the UI; fill in the install notes only if left empty.
-            if [ -z "$(gh release view "$TAG" --json body -q .body)" ]; then
-              gh release edit "$TAG" --notes-file .github/release-notes.md
+            # Keep notes written when publishing; a manual run regenerates them.
+            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ -z "$(gh release view "$TAG" --json body -q .body)" ]; then
+              gh release edit "$TAG" --notes-file build/notes.md
             fi
           else
-            gh release create "$TAG" build/Headroom-*.dmg \
-              --title "Headroom ${TAG#v}" \
-              --notes-file .github/release-notes.md
+            gh release create "$TAG" build/Headroom-*.dmg --title "Headroom ${TAG#v}" --notes-file build/notes.md
           fi
