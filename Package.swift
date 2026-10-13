@@ -12,6 +12,11 @@ let package = Package(
                 .linkedFramework("IOKit"),
                 .linkedFramework("ServiceManagement"),
             ]
-        )
+        ),
+        .testTarget(
+            name: "HeadroomTests",
+            dependencies: ["Headroom"],
+            path: "Tests/HeadroomTests"
+        ),
     ]
 )
