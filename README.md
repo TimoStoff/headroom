@@ -27,6 +27,13 @@ One compact, native-looking item in the menu bar. Click it for a dashboard with 
 
 Providers you do not use are hidden automatically.
 
+**Keep awake** (like Amphetamine or `caffeinate`)
+- Keep the Mac from idle sleeping for 1, 2, 4 or 8 hours, or indefinitely, from the cup menu in the dashboard footer
+- Option-click the menu bar item to toggle it; a cup appears in the menu bar while it is on
+- Optional: stay awake while Claude Code or Grok is working (any transcript written in the last 10 minutes), so long agent runs are not cut off by sleep
+- Optionally keep the display on too
+- Uses a standard power assertion (visible in `pmset -g assertions`), released automatically if Headroom quits; closing the lid still sleeps
+
 ## Requirements
 
 - macOS 14 or newer (built and tested on Apple Silicon)

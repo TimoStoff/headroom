@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let claudeClient = ClaudeLimitsClient()
     private let grokClient = GrokClient()
     private let ledger = Ledger()
+    private let keepAwake = KeepAwake()
 
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
@@ -60,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             if Prefs.sampleInterval != currentInterval { startSampling() }
+            syncAwake()
             redraw()
         }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -70,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         ledger.flush()
+        keepAwake.release()
     }
 
     // MARK: Sampling
@@ -88,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Battery changes slowly and reading the smart battery registry is the costliest probe.
         if tick % max(1, Int(5 / currentInterval)) == 0 { store.battery = sampler.battery() }
         tick += 1
+        syncAwake()
         redraw()
     }
 
@@ -137,21 +141,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let windowStart = store.claudeLimits?.session?.resetsAt.map { $0.addingTimeInterval(-5 * 3600) }
         ledger.refresh(windowStart: windowStart, progress: { [weak self] msg in
             DispatchQueue.main.async { self?.store.indexing = msg }
-        }, completion: { [weak self] claude, grok in
+        }, completion: { [weak self] claude, grok, lastActivity in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.store.claudeUsage = claude
                 self.store.grokUsage = grok
                 self.store.usageUpdated = Date()
                 self.ledgerBusy = false
+                self.keepAwake.agentActivity = lastActivity
+                self.syncAwake()
             }
         })
+    }
+
+    // MARK: Keep awake
+
+    private func setAwake(_ session: AwakeSession) {
+        keepAwake.set(session)
+        syncAwake()
+        redraw()
+    }
+
+    /// Mirrors the assertion state into the store, publishing only on change so the popover is not re-rendered.
+    private func syncAwake() {
+        keepAwake.update()
+        let until = keepAwake.manual ? keepAwake.until : nil
+        if store.awakeUntil != until { store.awakeUntil = until }
+        if store.awakeForAgents != keepAwake.agentsWorking { store.awakeForAgents = keepAwake.agentsWorking }
     }
 
     // MARK: Popover
 
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
+        // Option-click toggles keep awake without opening the dashboard.
+        // Read the live key state: the status item may be hosted outside the app, so the current event can lack modifiers.
+        if NSEvent.modifierFlags.contains(.option) {
+            setAwake(keepAwake.manual ? .off : .indefinitely)
+            return
+        }
         if popover.isShown {
             popover.performClose(nil)
             return
@@ -162,7 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self?.refreshLimits(force: true)
                 self?.refreshUsage()
             },
-            quit: { NSApp.terminate(nil) }))
+            quit: { NSApp.terminate(nil) },
+            keepAwake: { [weak self] in self?.setAwake($0) }))
         let host = NSHostingController(rootView: view)
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host
@@ -201,7 +230,7 @@ extension AppDelegate {
         }
         print("strip width pt:", strip.size.width)
 
-        let view = PopoverView(store: store, actions: PopoverActions(refresh: {}, quit: {}))
+        let view = PopoverView(store: store, actions: PopoverActions(refresh: {}, quit: {}, keepAwake: { _ in }))
             .background(Color(nsColor: NSColor(white: 0.13, alpha: 1)))
             .environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: view)

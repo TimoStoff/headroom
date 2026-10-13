@@ -151,6 +151,14 @@ struct HoverView: View {
                 } else {
                     Text(store.grokError ?? "Loading").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
+            case .awake:
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(awakeStatus(store))
+                    Text(Prefs.bool(Prefs.awakeDisplay) ? "Display stays on" : "Display can sleep")
+                        .foregroundStyle(.secondary)
+                    Text("Option-click to turn on or off").foregroundStyle(.secondary)
+                }
+                .font(.system(size: 11))
             default: consumers
             }
         }
@@ -168,6 +176,7 @@ struct HoverView: View {
         case .battery: return "ENERGY SHARE"
         case .claude: return "CLAUDE LIMITS"
         case .grok: return "GROK CREDITS"
+        case .awake: return "KEEP AWAKE"
         }
     }
 

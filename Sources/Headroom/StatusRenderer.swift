@@ -40,6 +40,9 @@ enum StatusRenderer {
         if Prefs.bool(Prefs.showGrok), store.grokAvailable {
             add(.grok, gauges(symbol: "bolt.horizontal.circle", fallback: "GK", values: [store.grokPlan?.percent]))
         }
+        if store.awake {
+            add(.awake, icon("cup.and.saucer.fill", "AW"))
+        }
 
         let width = max(segments.reduce(0) { $0 + $1.width } + gap * CGFloat(max(segments.count - 1, 0)), 14)
         // Rasterize once per tick; a drawing-handler image would be re-drawn on every display pass.

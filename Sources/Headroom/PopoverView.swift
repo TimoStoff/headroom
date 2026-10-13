@@ -18,6 +18,16 @@ extension Color {
 struct PopoverActions {
     var refresh: () -> Void
     var quit: () -> Void
+    var keepAwake: (AwakeSession) -> Void
+}
+
+/// One-line keep-awake state, shared by the footer and the menu bar hover.
+func awakeStatus(_ store: Store) -> String {
+    if let until = store.awakeUntil {
+        if until == .distantFuture { return "Awake indefinitely" }
+        return "Awake for \(Fmt.until(until)), until \(until.formatted(date: .omitted, time: .shortened))"
+    }
+    return store.awakeForAgents ? "Awake while Claude Code or Grok works" : "Sleep allowed"
 }
 
 struct PopoverView: View {
@@ -520,6 +530,8 @@ struct Footer: View {
     @AppStorage(Prefs.showClaude) private var showClaude = true
     @AppStorage(Prefs.showGrok) private var showGrok = true
     @AppStorage(Prefs.interval) private var interval = 1.0
+    @AppStorage(Prefs.awakeForAgents) private var awakeForAgents = false
+    @AppStorage(Prefs.awakeDisplay) private var awakeDisplay = false
     @State private var launchAtLogin = false
 
     var body: some View {
@@ -545,6 +557,23 @@ struct Footer: View {
             }
             .menuStyle(.borderlessButton).fixedSize()
 
+            Menu {
+                Section(awakeStatus(store)) {
+                    Button("Off") { actions.keepAwake(.off) }.disabled(store.awakeUntil == nil)
+                    Button("For 1 hour") { actions.keepAwake(.hours(1)) }
+                    Button("For 2 hours") { actions.keepAwake(.hours(2)) }
+                    Button("For 4 hours") { actions.keepAwake(.hours(4)) }
+                    Button("For 8 hours") { actions.keepAwake(.hours(8)) }
+                    Button("Indefinitely") { actions.keepAwake(.indefinitely) }
+                }
+                Toggle("While Claude Code or Grok works", isOn: $awakeForAgents)
+                Toggle("Keep display on", isOn: $awakeDisplay)
+            } label: {
+                Label(awakeLabel, systemImage: store.awake ? "cup.and.saucer.fill" : "cup.and.saucer")
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            .help("Keep awake (Option-click the menu bar item to toggle)")
+
             Spacer()
             Text(store.indexing ?? "Usage updated \(Fmt.ago(store.usageUpdated))")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -554,6 +583,11 @@ struct Footer: View {
         }
         .font(.system(size: 11))
         .onAppear { launchAtLogin = SMAppService.mainApp.status == .enabled }
+    }
+
+    private var awakeLabel: String {
+        if let until = store.awakeUntil { return until == .distantFuture ? "Awake" : "Awake \(Fmt.until(until))" }
+        return store.awakeForAgents ? "Awake (agents)" : "Keep awake"
     }
 
     private func setLaunchAtLogin(_ on: Bool) {

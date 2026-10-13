@@ -16,11 +16,14 @@ enum Prefs {
     static let showClaude = "show.claude"
     static let showGrok = "show.grok"
     static let interval = "interval"
+    static let awakeForAgents = "awake.agents"
+    static let awakeDisplay = "awake.display"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
             showCPU: true, showGPU: false, showMem: true, showBattery: false,
             showClaude: true, showGrok: true, interval: 1.0,
+            awakeForAgents: false, awakeDisplay: false,
         ])
     }
 
@@ -79,6 +82,10 @@ final class Store: ObservableObject {
     @Published var grokUsage: UsageSummary?
     @Published var indexing: String?
     @Published var usageUpdated: Date?
+    /// Keep awake: end of the manual session (.distantFuture = indefinitely), and whether working agents hold it.
+    @Published var awakeUntil: Date?
+    @Published var awakeForAgents = false
+    var awake: Bool { awakeUntil != nil || awakeForAgents }
 
     private var seq = 0
 

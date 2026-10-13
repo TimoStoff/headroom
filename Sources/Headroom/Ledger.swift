@@ -176,6 +176,8 @@ final class Ledger {
     /// Transcripts modified in the last two hours; tailed on every refresh between full scans.
     private var hotFiles: Set<String> = []
     private var lastFullScan = Date.distantPast
+    /// Newest transcript write seen (Claude or Grok), used to tell when an agent is working.
+    private var lastActivity = Date.distantPast
     private var changeCounter = 0
     private var lastSummaryKey = ""
     private var cachedSummaries: (UsageSummary, UsageSummary)?
@@ -188,7 +190,7 @@ final class Ledger {
 
     /// Scans for new data and returns summaries. `progress` reports indexing on first run.
     func refresh(windowStart: Date?, progress: @escaping (String?) -> Void,
-                 completion: @escaping (_ claude: UsageSummary, _ grok: UsageSummary) -> Void) {
+                 completion: @escaping (_ claude: UsageSummary, _ grok: UsageSummary, _ lastActivity: Date) -> Void) {
         queue.async { [self] in
             if !loaded { loadCache(); loaded = true }
             let full = Date().timeIntervalSince(lastFullScan) >= 300
@@ -212,7 +214,7 @@ final class Ledger {
                 cachedSummaries = (summarize(claudeHours(), windowStart: windowStart), summarize(grokHours(), windowStart: nil))
                 lastSummaryKey = key
             }
-            completion(cachedSummaries!.0, cachedSummaries!.1)
+            completion(cachedSummaries!.0, cachedSummaries!.1, lastActivity)
         }
     }
 
@@ -237,7 +239,7 @@ final class Ledger {
                       let mtime = v.contentModificationDate, mtime >= cutoff else { continue }
                 let path = url.path
                 present.insert(path)
-                if mtime >= hotCutoff { hot.insert(path) }
+                if mtime >= hotCutoff { hot.insert(path); lastActivity = max(lastActivity, mtime) }
                 let size = UInt64(v.fileSize ?? 0)
                 if state.files[path]?.offset != size { candidates.append((path, size)) }
             }
@@ -293,6 +295,7 @@ final class Ledger {
         for path in hotFiles {
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
                   let size = (attrs[.size] as? NSNumber)?.uint64Value else { continue }
+            if let m = attrs[.modificationDate] as? Date { lastActivity = max(lastActivity, m) }
             var offset = state.files[path]?.offset ?? 0
             if size == offset { continue }
             if size < offset { offset = 0 }
@@ -396,6 +399,7 @@ final class Ledger {
                 let url = dir.appendingPathComponent(s).appendingPathComponent("usage.json")
                 guard let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate else { continue }
                 present.insert(url.path)
+                lastActivity = max(lastActivity, mtime)
                 if grokFiles[url.path]?.mtime == mtime { continue }
                 grokFiles[url.path] = GrokFile(mtime: mtime, turns: parseGrokUsage(url))
                 changeCounter += 1
