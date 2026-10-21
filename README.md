@@ -59,7 +59,7 @@ Providers you do not use are hidden automatically.
 2. Open it and drag **Headroom** onto **Applications**.
 3. Launch Headroom. It lives in the menu bar, not the Dock.
 
-Headroom is not notarized by Apple yet, so macOS blocks the first launch once. Open **System Settings > Privacy & Security** and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/Headroom.app`.
+Releases are signed with a Developer ID and notarized by Apple, so they open without a warning. Releases up to 1.1 were not: macOS blocks their first launch once. Open **System Settings > Privacy & Security** and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/Headroom.app`.
 
 ## Build from source
 
@@ -69,7 +69,7 @@ Headroom is not notarized by Apple yet, so macOS blocks the first launch once. O
 ./build.sh dmg        # packages build/Headroom-<version>.dmg
 ```
 
-Builds are universal (Apple Silicon and Intel). To publish a release, bump `CFBundleShortVersionString` in `Resources/Info.plist`, then push a matching tag such as `v1.1`; the release workflow builds the DMG and attaches it.
+Builds are universal (Apple Silicon and Intel). Local builds get an ad-hoc signature; set `SIGN_ID` (and a notary profile) to sign and notarize, see the top of `build.sh`. To publish a release, bump `CFBundleShortVersionString` in `Resources/Info.plist`, then push a matching tag such as `v1.1`; the release workflow builds the DMG and attaches it.
 
 Headroom registers itself as a login item on first launch. Turn that off under Settings in the dashboard footer.
 

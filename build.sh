@@ -3,17 +3,25 @@
 #   ./build.sh            build build/Headroom.app
 #   ./build.sh install    build, copy to /Applications and (re)launch
 #   ./build.sh dmg        build and package build/Headroom-<version>.dmg
+#
+# Signing (optional; without it the app gets an ad-hoc signature):
+#   SIGN_ID          Developer ID Application identity (name or SHA-1) to sign the app and DMG with
+# Notarizing the DMG (needs SIGN_ID), either:
+#   NOTARY_PROFILE   a profile saved with `xcrun notarytool store-credentials`, or
+#   NOTARY_KEY, NOTARY_KEY_ID, NOTARY_ISSUER   an App Store Connect API key (.p8 path, key id, issuer id)
 set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Resources/Info.plist)
 
 # Build each architecture separately and merge with lipo: `--arch a --arch b` needs Xcode's XCBuild,
-# which the command line tools alone do not include.
+# which the command line tools alone do not include. Each slice gets its own scratch path, since newer
+# SwiftPM reports the same bin path for every triple.
 SLICES=()
 for ARCH in arm64 x86_64; do
-    swift build -c release --triple "$ARCH-apple-macosx14.0"
-    SLICES+=("$(swift build -c release --triple "$ARCH-apple-macosx14.0" --show-bin-path)/Headroom")
+    OPTS=(-c release --triple "$ARCH-apple-macosx14.0" --scratch-path ".build/$ARCH")
+    swift build "${OPTS[@]}"
+    SLICES+=("$(swift build "${OPTS[@]}" --show-bin-path)/Headroom")
 done
 BIN=.build/Headroom-universal
 lipo -create "${SLICES[@]}" -output "$BIN"
@@ -24,9 +32,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Headroom"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-# Ad-hoc signature. For a notarized release, sign with a Developer ID instead:
-#   codesign --force --options runtime --sign "Developer ID Application: ..." "$APP"
-codesign --force --sign - "$APP"
+if [ -n "${SIGN_ID:-}" ]; then
+    # Notarization requires the hardened runtime and a secure timestamp.
+    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
+    codesign --verify --strict --verbose=2 "$APP"
+else
+    codesign --force --sign - "$APP"
+fi
 echo "Built $APP ($VERSION, $(lipo -archs "$APP/Contents/MacOS/Headroom"))"
 
 case "${1:-}" in
@@ -40,6 +52,20 @@ install)
     ;;
 dmg)
     DMG="build/Headroom-$VERSION.dmg"
+    AUTH=()
+    if [ -z "${SIGN_ID:-}" ]; then :
+    elif [ -n "${NOTARY_PROFILE:-}" ]; then AUTH=(--keychain-profile "$NOTARY_PROFILE")
+    elif [ -n "${NOTARY_KEY:-}" ]; then AUTH=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+    fi
+    # Notarize and staple the app first so it keeps its ticket after being copied out of the DMG
+    # (otherwise the first launch needs a network check). notarytool takes a zip, not a bundle.
+    if [ ${#AUTH[@]} -gt 0 ]; then
+        ditto -c -k --keepParent "$APP" build/Headroom.zip
+        xcrun notarytool submit build/Headroom.zip "${AUTH[@]}" --wait
+        rm build/Headroom.zip
+        xcrun stapler staple "$APP"
+    fi
+
     STAGE=build/dmg
     rm -rf "$STAGE" "$DMG"
     mkdir -p "$STAGE"
@@ -48,5 +74,17 @@ dmg)
     hdiutil create -volname "Headroom $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
     rm -rf "$STAGE"
     echo "Packaged $DMG ($(du -h "$DMG" | cut -f1))"
+
+    [ -n "${SIGN_ID:-}" ] || exit 0
+    codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
+    if [ ${#AUTH[@]} -eq 0 ]; then
+        echo "Signed $DMG (not notarized: no NOTARY_PROFILE or NOTARY_KEY)"
+        exit 0
+    fi
+    xcrun notarytool submit "$DMG" "${AUTH[@]}" --wait
+    xcrun stapler staple "$DMG"
+    xcrun stapler validate "$DMG"
+    spctl --assess --type open --context context:primary-signature --verbose "$DMG"
+    echo "Notarized $DMG"
     ;;
 esac

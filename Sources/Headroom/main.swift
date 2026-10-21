@@ -52,11 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         refreshLimits()
         refreshUsage()
         refreshBedrock()
+        checkForUpdate()
         timers = [
             Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshLimits() },
             Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.refreshUsage() },
             // CloudWatch bills per metric requested, so poll gently (about $0.30 a month per region).
             Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in self?.refreshBedrock() },
+            Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in self?.checkForUpdate() },
         ]
         timers.forEach { $0.tolerance = 2 }
         if snapshotDir != nil {
@@ -104,6 +106,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func redraw() {
         statusItem.button?.image = StatusRenderer.render(store)
 
+    }
+
+    /// Failures are ignored: a missed check just retries on the next timer.
+    private func checkForUpdate() {
+        guard let current = appVersion else { return }
+        Task { @MainActor in
+            if let u = try? await latestRelease(newerThan: current) { store.update = u }
+        }
     }
 
     // MARK: Limits and usage
