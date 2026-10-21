@@ -42,7 +42,7 @@ enum Palette {
     static let claude = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
     static let grok = NSColor(srgbRed: 0.62, green: 0.66, blue: 0.74, alpha: 1)
     static let bedrock = NSColor(srgbRed: 1.00, green: 0.60, blue: 0.00, alpha: 1)
-    static let opencode = NSColor(srgbRed: 0.40, green: 0.62, blue: 0.98, alpha: 1)
+    static let opencode = NSColor(srgbRed: 0.95, green: 0.45, blue: 0.70, alpha: 1)
 
     static func severity(_ pct: Double?, base: NSColor) -> NSColor {
         guard let pct else { return base }
