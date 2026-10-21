@@ -52,6 +52,20 @@ install)
     ;;
 dmg)
     DMG="build/Headroom-$VERSION.dmg"
+    AUTH=()
+    if [ -z "${SIGN_ID:-}" ]; then :
+    elif [ -n "${NOTARY_PROFILE:-}" ]; then AUTH=(--keychain-profile "$NOTARY_PROFILE")
+    elif [ -n "${NOTARY_KEY:-}" ]; then AUTH=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+    fi
+    # Notarize and staple the app first so it keeps its ticket after being copied out of the DMG
+    # (otherwise the first launch needs a network check). notarytool takes a zip, not a bundle.
+    if [ ${#AUTH[@]} -gt 0 ]; then
+        ditto -c -k --keepParent "$APP" build/Headroom.zip
+        xcrun notarytool submit build/Headroom.zip "${AUTH[@]}" --wait
+        rm build/Headroom.zip
+        xcrun stapler staple "$APP"
+    fi
+
     STAGE=build/dmg
     rm -rf "$STAGE" "$DMG"
     mkdir -p "$STAGE"
@@ -63,15 +77,10 @@ dmg)
 
     [ -n "${SIGN_ID:-}" ] || exit 0
     codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
-    if [ -n "${NOTARY_PROFILE:-}" ]; then
-        AUTH=(--keychain-profile "$NOTARY_PROFILE")
-    elif [ -n "${NOTARY_KEY:-}" ]; then
-        AUTH=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
-    else
+    if [ ${#AUTH[@]} -eq 0 ]; then
         echo "Signed $DMG (not notarized: no NOTARY_PROFILE or NOTARY_KEY)"
         exit 0
     fi
-    # The ticket also covers the app inside, so Gatekeeper accepts it without a network check.
     xcrun notarytool submit "$DMG" "${AUTH[@]}" --wait
     xcrun stapler staple "$DMG"
     xcrun stapler validate "$DMG"
