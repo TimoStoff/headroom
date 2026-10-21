@@ -10,6 +10,7 @@ extension Color {
     static let claude = Color(nsColor: Palette.claude)
     static let grok = Color(nsColor: Palette.grok)
     static let bedrock = Color(nsColor: Palette.bedrock)
+    static let opencode = Color(nsColor: Palette.opencode)
 
     static func severity(_ pct: Double, base: Color) -> Color {
         pct >= 90 ? .red : pct >= 75 ? .orange : base
@@ -481,8 +482,10 @@ struct UsageCard: View {
         let bedrock = store.bedrockUsage
         // Bedrock-only setups have no subscription traffic; drop the empty Claude row then.
         let claude = (store.claudeUsage?.month.tokens ?? 0) > 0 || bedrock == nil ? store.claudeUsage : nil
-        let combined = UsageSummary.combine(UsageSummary.combine(claude, grok), bedrock)
-        let names = [claude.map { _ in "Claude" }, grok.map { _ in "Grok" }, bedrock.map { _ in "Bedrock" }].compactMap { $0 }
+        let opencode = (store.opencodeUsage?.month.tokens ?? 0) > 0 ? store.opencodeUsage : nil
+        let combined = [grok, bedrock, opencode].reduce(claude, UsageSummary.combine)
+        let names = [claude.map { _ in "Claude" }, grok.map { _ in "Grok" }, bedrock.map { _ in "Bedrock" },
+                     opencode.map { _ in "OpenCode" }].compactMap { $0 }
         VStack(alignment: .leading, spacing: 10) {
             CardHeader(title: "Token usage", icon: "chart.bar.xaxis", tint: .claude,
                        trailing: names == ["Claude"] ? "Claude Code" : names.joined(separator: " + "))
@@ -495,6 +498,7 @@ struct UsageCard: View {
                 if claude != nil { ProviderRow(name: "Claude", color: .claude, summary: claude) }
                 if grok != nil { ProviderRow(name: "Grok", color: .grok, summary: grok) }
                 if bedrock != nil { ProviderRow(name: "Bedrock", color: .bedrock, summary: bedrock) }
+                if opencode != nil { ProviderRow(name: "OpenCode", color: .opencode, summary: opencode) }
             }
             if let w = store.claudeUsage?.window {
                 HStack {
@@ -535,7 +539,7 @@ struct ProviderRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text(name).frame(width: 46, alignment: .leading)
+            Text(name).lineLimit(1).minimumScaleFactor(0.8).frame(width: 46, alignment: .leading)
             ForEach([summary?.today, summary?.week, summary?.month].indices, id: \.self) { i in
                 let t = [summary?.today, summary?.week, summary?.month][i]
                 Text(t.map { "\(Fmt.tokens($0.tokens)) \(Fmt.usd($0.cost))" } ?? "--")

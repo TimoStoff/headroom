@@ -147,12 +147,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let windowStart = store.claudeLimits?.session?.resetsAt.map { $0.addingTimeInterval(-5 * 3600) }
         ledger.refresh(windowStart: windowStart, progress: { [weak self] msg in
             DispatchQueue.main.async { self?.store.indexing = msg }
-        }, completion: { [weak self] claude, grok, bedrock, lastActivity in
+        }, completion: { [weak self] claude, grok, bedrock, opencode, lastActivity in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.store.claudeUsage = claude
                 self.store.grokUsage = grok
                 self.store.bedrockLocalUsage = bedrock
+                self.store.opencodeUsage = opencode
                 self.store.usageUpdated = Date()
                 self.ledgerBusy = false
                 self.keepAwake.agentActivity = lastActivity

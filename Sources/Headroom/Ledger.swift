@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 // MARK: - Aggregates
 
@@ -84,6 +85,7 @@ func modelFamily(_ model: String) -> String {
     let m = model.lowercased()
     for f in ["opus", "fable", "sonnet", "haiku", "mythos"] where m.contains(f) { return f.prefix(1).uppercased() + f.dropFirst() }
     if m.hasPrefix("grok") { return "Grok" }
+    if m.hasPrefix("glm") { return "GLM" }
     return model
 }
 
@@ -110,7 +112,8 @@ final class Pricing {
         }
         let age = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
             .map { -$0.timeIntervalSinceNow } ?? .infinity
-        if age > 86400 || table.isEmpty { Task.detached { await self.download() } }
+        // A table cached before GLM prices were kept has no zai/ rows; fetch it again.
+        if age > 86400 || !table.keys.contains(where: { $0.hasPrefix("zai/") }) { Task.detached { await self.download() } }
     }
 
     private func download() async {
@@ -118,7 +121,8 @@ final class Pricing {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         var t: [String: Price] = [:]
         // Bedrock ids (`anthropic.claude-...`, `au.anthropic.claude-...-v1:0`) carry regional prices.
-        for (k, v) in json where k.hasPrefix("claude") || k.contains("anthropic.claude") {
+        // `zai/glm-...` prices the GLM models OpenCode runs, looked up by bare id below.
+        for (k, v) in json where k.hasPrefix("claude") || k.contains("anthropic.claude") || k.hasPrefix("zai/") {
             guard let v = v as? [String: Any], let input = v.double("input_cost_per_token"),
                   let output = v.double("output_cost_per_token") else { continue }
             let write = v.double("cache_creation_input_token_cost") ?? input * 1.25
@@ -142,7 +146,7 @@ final class Pricing {
             var base = model.hasPrefix(Ledger.bedrockPrefix) ? String(model.dropFirst(Ledger.bedrockPrefix.count)) : model
             if let r = base.range(of: "anthropic.") { base = String(base[r.upperBound...]) }
             if let r = base.range(of: #"-v\d+(:\d+)?$"#, options: .regularExpression) { base = String(base[..<r.lowerBound]) }
-            if p == nil { p = table[base] }
+            if p == nil { p = table[base] ?? table["zai/" + base] }
             // claude-haiku-4-5-20251001 -> claude-haiku-4-5
             if p == nil, let r = base.range(of: #"-\d{8}$"#, options: .regularExpression) { p = table[String(base[..<r.lowerBound])] }
             if !table.isEmpty { resolved[model] = p }
@@ -156,7 +160,7 @@ final class Pricing {
 
 // MARK: - Ledger
 
-/// Incremental token ledger over Claude Code transcripts and Grok session usage files.
+/// Incremental token ledger over Claude Code transcripts, Grok session usage files and the OpenCode database.
 /// Claude: tail-reads ~/.claude/projects/**/*.jsonl by byte offset, dedupes on message id + request id
 /// (same rule as ccusage), and buckets per hour and model. State is cached on disk so relaunches are instant.
 /// Turns Claude Code ran through AWS Bedrock (message ids `msg_bdrk_...`) are kept apart under `bedrock/<model>`.
@@ -183,14 +187,16 @@ final class Ledger {
     private var dirty = false
     private var lastSave = Date.distantPast
     private var grokFiles: [String: GrokFile] = [:]
+    private var opencodeHours: [Int: [String: Agg]] = [:]
+    private var opencodeStamp = Date.distantPast
     /// Transcripts modified in the last two hours; tailed on every refresh between full scans.
     private var hotFiles: Set<String> = []
     private var lastFullScan = Date.distantPast
-    /// Newest transcript write seen (Claude or Grok), used to tell when an agent is working.
+    /// Newest transcript write seen (Claude, Grok or OpenCode), used to tell when an agent is working.
     private var lastActivity = Date.distantPast
     private var changeCounter = 0
     private var lastSummaryKey = ""
-    private var cachedSummaries: (UsageSummary, UsageSummary, UsageSummary)?
+    private var cachedSummaries: (UsageSummary, UsageSummary, UsageSummary, UsageSummary)?
     private let cacheFile = appSupportDir.appendingPathComponent("claude-ledger.json")
     private let usageNeedle = Array(#""usage":{"#.utf8)
 
@@ -225,18 +231,20 @@ final class Ledger {
     /// Scans for new data and returns summaries. `progress` reports indexing on first run.
     func refresh(windowStart: Date?, progress: @escaping (String?) -> Void,
                  completion: @escaping (_ claude: UsageSummary, _ grok: UsageSummary, _ bedrock: UsageSummary,
-                                        _ lastActivity: Date) -> Void) {
+                                        _ opencode: UsageSummary, _ lastActivity: Date) -> Void) {
         queue.async { [self] in
             if !loaded { loadCache(); loaded = true }
             let full = Date().timeIntervalSince(lastFullScan) >= 300
             if full {
                 scanClaude(progress: progress)
                 scanGrok()
+                scanOpenCode()
                 lastFullScan = Date()
             } else {
                 discoverNewFiles()
                 tailHotFiles()
                 scanGrok()
+                scanOpenCode()
             }
             // Encoding the cache is the most expensive step, so only persist occasionally (and on quit).
             if dirty, lastSave == .distantPast || Date().timeIntervalSince(lastSave) > 600 {
@@ -248,10 +256,12 @@ final class Ledger {
             if key != lastSummaryKey || cachedSummaries == nil {
                 cachedSummaries = (Self.summarize(claudeHours(bedrock: false), windowStart: windowStart),
                                    Self.summarize(grokHours(), windowStart: nil),
-                                   Self.summarize(claudeHours(bedrock: true), windowStart: nil))
+                                   Self.summarize(claudeHours(bedrock: true), windowStart: nil),
+                                   Self.summarize(opencodeHours, windowStart: nil))
                 lastSummaryKey = key
             }
-            completion(cachedSummaries!.0, cachedSummaries!.1, cachedSummaries!.2, lastActivity)
+            let c = cachedSummaries!
+            completion(c.0, c.1, c.2, c.3, lastActivity)
         }
     }
 
@@ -484,6 +494,57 @@ final class Ledger {
             }
         }
         return hours
+    }
+
+    // MARK: OpenCode
+
+    /// OpenCode keeps every turn in SQLite (`session_message`, one row per message id, so no dedupe is needed).
+    /// The database is small enough to re-aggregate whenever it changes.
+    private func scanOpenCode() {
+        let db = homeDir.appendingPathComponent(".local/share/opencode/opencode.db").path
+        // Writes land in the WAL first, so its mtime is the one that moves.
+        let stamp = [db, db + "-wal"].compactMap {
+            (try? FileManager.default.attributesOfItem(atPath: $0))?[.modificationDate] as? Date
+        }.max() ?? .distantPast
+        guard stamp != opencodeStamp else { return }
+        let cutoff = Int64(Date().addingTimeInterval(-Double(Self.retentionDays) * 86400).timeIntervalSince1970 * 1000)
+        guard let rows = Self.queryOpenCode(db, since: cutoff) else { return }
+        opencodeStamp = stamp
+        opencodeHours = rows.hours
+        if let last = rows.last { lastActivity = max(lastActivity, last) }
+        changeCounter += 1
+    }
+
+    /// nil when the database is missing or its layout changed (OpenCode has renamed tables before).
+    static func queryOpenCode(_ path: String, since: Int64) -> (hours: [Int: [String: Agg]], last: Date?)? {
+        var handle: OpaquePointer?
+        defer { sqlite3_close(handle) }
+        guard sqlite3_open_v2(path, &handle, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { return nil }
+        sqlite3_busy_timeout(handle, 500)
+        let sql = """
+            SELECT time_created / 3600000, json_extract(data, '$.model.id'),
+                   sum(json_extract(data, '$.tokens.input')),
+                   sum(coalesce(json_extract(data, '$.tokens.output'), 0) + coalesce(json_extract(data, '$.tokens.reasoning'), 0)),
+                   sum(json_extract(data, '$.tokens.cache.write')), sum(json_extract(data, '$.tokens.cache.read')),
+                   count(*), max(time_updated)
+            FROM session_message
+            WHERE type = 'assistant' AND time_created >= ? AND json_extract(data, '$.tokens') IS NOT NULL
+            GROUP BY 1, 2
+            """
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(handle, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_int64(stmt, 1, since)
+        var hours: [Int: [String: Agg]] = [:]
+        var last: Int64 = 0
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            func col(_ i: Int32) -> Int { Int(sqlite3_column_int64(stmt, i)) }
+            let model = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? "opencode"
+            hours[col(0), default: [:]][model, default: Agg()].add(
+                Agg(input: col(2), output: col(3), cacheWrite5m: col(4), cacheRead: col(5), calls: col(6)))
+            last = max(last, sqlite3_column_int64(stmt, 7))
+        }
+        return (hours, last > 0 ? Date(timeIntervalSince1970: Double(last) / 1000) : nil)
     }
 
     // MARK: Summaries
