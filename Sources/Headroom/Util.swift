@@ -80,6 +80,8 @@ let appSupportDir: URL = {
 }()
 
 let homeDir = FileManager.default.homeDirectoryForCurrentUser
+/// nil for `swift build` debug builds, which have no Info.plist.
+let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
 
 /// Runs a binary and returns its exit status, stdout and (if asked for) stderr. Kills it after `timeout` seconds.
 @discardableResult

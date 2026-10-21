@@ -603,6 +603,10 @@ struct Footer: View {
                 }
                 Button("AWS Bedrock...", action: actions.configureBedrock)
                 Toggle("Launch at login", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin))
+                Section(appVersion.map { "Headroom \($0)" } ?? "Headroom (development build)") {
+                    Link("Release notes", destination: URL(string: "https://github.com/sandrich/headroom/releases"
+                                                           + (appVersion.map { "/tag/v\($0)" } ?? ""))!)
+                }
             } label: {
                 Label("Settings", systemImage: "gearshape")
             }

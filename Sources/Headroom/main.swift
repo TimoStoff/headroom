@@ -110,8 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// Failures are ignored: a missed check just retries on the next timer.
     private func checkForUpdate() {
-        // Debug builds from `swift build` have no Info.plist and no version to compare.
-        guard let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String else { return }
+        guard let current = appVersion else { return }
         Task { @MainActor in
             if let u = try? await latestRelease(newerThan: current) { store.update = u }
         }
