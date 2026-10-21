@@ -626,6 +626,9 @@ struct Footer: View {
             .help("Keep awake (Option-click the menu bar item to toggle)")
 
             Spacer()
+            if let u = store.update {
+                Link("Update to \(u.version)", destination: u.url).help("Open the release page to download it")
+            }
             Text(store.indexing ?? "Usage updated \(Fmt.ago(store.usageUpdated))")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
             Button(action: actions.refresh) { Image(systemName: "arrow.clockwise") }

@@ -92,6 +92,7 @@ final class Store: ObservableObject {
     @Published var bedrockConfig: BedrockConfig?
     @Published var indexing: String?
     @Published var usageUpdated: Date?
+    @Published var update: (version: String, url: URL)?
     /// Keep awake: end of the manual session (.distantFuture = indefinitely), and whether working agents hold it.
     @Published var awakeUntil: Date?
     @Published var awakeForAgents = false
