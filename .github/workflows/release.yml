@@ -6,6 +6,12 @@ name: Release
 # The tag must match CFBundleShortVersionString in Resources/Info.plist.
 # Release notes are generated from the commits since the previous tag, unless written when publishing.
 # Run manually with a tag to rebuild an existing release and regenerate its notes.
+#
+# Signing and notarization run when these repository secrets are set; without them the DMG is ad-hoc signed:
+#   DEVELOPER_ID_P12           base64 of the "Developer ID Application" certificate exported with its key (.p12)
+#   DEVELOPER_ID_P12_PASSWORD  the password chosen when exporting it
+#   NOTARY_KEY_P8              contents of an App Store Connect API key (.p8, "Developer" access)
+#   NOTARY_KEY_ID, NOTARY_ISSUER_ID   that key's id and the team's issuer id
 on:
   release:
     types: [published]
@@ -44,6 +50,36 @@ jobs:
             exit 1
           fi
 
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          if [ -z "$P12" ]; then
+            echo "No DEVELOPER_ID_P12 secret, building with an ad-hoc signature"
+            exit 0
+          fi
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          pw=$(uuidgen)
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          id=$(security find-identity -v -p codesigning "$kc" | awk '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$id" ]; then echo "No Developer ID Application identity in DEVELOPER_ID_P12"; exit 1; fi
+          echo "SIGN_ID=$id" >> "$GITHUB_ENV"
+          if [ -n "$NOTARY_KEY_P8" ]; then
+            printf '%s\n' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+            { echo "NOTARY_KEY=$RUNNER_TEMP/notary.p8"; echo "NOTARY_KEY_ID=$NOTARY_KEY_ID"; echo "NOTARY_ISSUER=$NOTARY_ISSUER_ID"; } >> "$GITHUB_ENV"
+          fi
+
       - name: Build DMG
         run: ./build.sh dmg
 
@@ -59,7 +95,11 @@ jobs:
               echo "**Full changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$prev...$TAG"
               echo
             fi
-            echo "Universal build for Apple Silicon and Intel, macOS 14 or newer. Not notarized yet: on first launch, allow it under System Settings > Privacy & Security > Open Anyway."
+            if [ -n "${NOTARY_KEY:-}" ]; then
+              echo "Universal build for Apple Silicon and Intel, macOS 14 or newer. Signed and notarized by Apple."
+            else
+              echo "Universal build for Apple Silicon and Intel, macOS 14 or newer. Not notarized: on first launch, allow it under System Settings > Privacy & Security > Open Anyway."
+            fi
           } > build/notes.md
           cat build/notes.md
 
