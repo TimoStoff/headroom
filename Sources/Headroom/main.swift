@@ -296,6 +296,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.contentViewController = host
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
+        // Without a key window the first click only focuses the popover and closes any menu it opened.
+        host.view.window?.makeKey()
     }
 
     func popoverDidClose(_ notification: Notification) {
