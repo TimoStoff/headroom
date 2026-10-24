@@ -12,6 +12,8 @@ name: Release
 #   DEVELOPER_ID_P12_PASSWORD  the password chosen when exporting it
 #   NOTARY_KEY_P8              contents of an App Store Connect API key (.p8, "Developer" access)
 #   NOTARY_KEY_ID, NOTARY_ISSUER_ID   that key's id and the team's issuer id
+# The Sparkle update feed (appcast.xml) is written and attached when this secret is set:
+#   SPARKLE_PRIVATE_KEY        EdDSA private key exported with Sparkle's `generate_keys -x`
 on:
   release:
     types: [published]
@@ -49,6 +51,12 @@ jobs:
             echo "Tag $TAG does not match Info.plist version $version"
             exit 1
           fi
+          # Sparkle compares CFBundleVersion, so it has to move with every release.
+          build=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" Resources/Info.plist)
+          if [ "$build" != "$version" ]; then
+            echo "CFBundleVersion $build does not match CFBundleShortVersionString $version"
+            exit 1
+          fi
 
       - name: Import signing certificate
         env:
@@ -83,6 +91,38 @@ jobs:
       - name: Build DMG
         run: ./build.sh dmg
 
+      - name: Write update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "No SPARKLE_PRIVATE_KEY secret, skipping appcast.xml"
+            exit 0
+          fi
+          version=${TAG#v}
+          dmg="build/Headroom-$version.dmg"
+          # Prints: sparkle:edSignature="..." length="..."
+          sig=$(printf '%s' "$SPARKLE_PRIVATE_KEY" | .build/arm64/artifacts/sparkle/Sparkle/bin/sign_update --ed-key-file - "$dmg")
+          # One item is enough: the feed URL always points at the latest release's copy.
+          cat > build/appcast.xml <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Headroom</title>
+              <item>
+                <title>Headroom $version</title>
+                <pubDate>$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
+                <sparkle:version>$version</sparkle:version>
+                <sparkle:shortVersionString>$version</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+                <sparkle:fullReleaseNotesLink>https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG</sparkle:fullReleaseNotesLink>
+                <enclosure url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Headroom-$version.dmg" $sig type="application/octet-stream"/>
+              </item>
+            </channel>
+          </rss>
+          XML
+          cat build/appcast.xml
+
       - name: Write release notes
         run: |
           prev=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
@@ -106,11 +146,11 @@ jobs:
       - name: Publish release
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" build/Headroom-*.dmg --clobber
+            gh release upload "$TAG" build/Headroom-*.dmg $(ls build/appcast.xml 2>/dev/null) --clobber
             # Keep notes written when publishing; a manual run regenerates them.
             if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ -z "$(gh release view "$TAG" --json body -q .body)" ]; then
               gh release edit "$TAG" --notes-file build/notes.md
             fi
           else
-            gh release create "$TAG" build/Headroom-*.dmg --title "Headroom ${TAG#v}" --notes-file build/notes.md
+            gh release create "$TAG" build/Headroom-*.dmg $(ls build/appcast.xml 2>/dev/null) --title "Headroom ${TAG#v}" --notes-file build/notes.md
           fi

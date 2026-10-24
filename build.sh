@@ -32,13 +32,27 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Headroom"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-if [ -n "${SIGN_ID:-}" ]; then
-    # Notarization requires the hardened runtime and a secure timestamp.
-    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
-    codesign --verify --strict --verbose=2 "$APP"
-else
-    codesign --force --sign - "$APP"
-fi
+
+# Sparkle (updates). Its XPC services are only needed by sandboxed apps; dropping them leaves
+# nothing whose entitlements must survive re-signing.
+FW="$APP/Contents/Frameworks/Sparkle.framework"
+mkdir -p "$APP/Contents/Frameworks"
+cp -R "$(find .build/arm64/artifacts -type d -path '*macos*' -name Sparkle.framework | head -1)" "$FW"
+rm -rf "$FW/Versions/B/XPCServices" "$FW/XPCServices"
+
+sign() {
+    if [ -n "${SIGN_ID:-}" ]; then
+        # Notarization requires the hardened runtime and a secure timestamp on every nested binary.
+        codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$@"
+    else
+        codesign --force --sign - "$@"
+    fi
+}
+# Inside out: nested helpers, then the framework, then the app.
+sign "$FW/Versions/B/Autoupdate" "$FW/Versions/B/Updater.app"
+sign "$FW"
+sign "$APP"
+[ -z "${SIGN_ID:-}" ] || codesign --verify --deep --strict --verbose=2 "$APP"
 echo "Built $APP ($VERSION, $(lipo -archs "$APP/Contents/MacOS/Headroom"))"
 
 case "${1:-}" in
@@ -53,6 +67,14 @@ install)
 dmg)
     DMG="build/Headroom-$VERSION.dmg"
     AUTH=()
+    # Stapling fetches the ticket from Apple, which sometimes fails from CI runners. It only matters for a
+    # first launch without network (Gatekeeper otherwise looks the ticket up online), so retry, then warn.
+    STAPLED=1
+    staple() {
+        for _ in 1 2 3 4 5; do xcrun stapler staple "$1" && return 0; sleep 20; done
+        echo "warning: could not staple $1; notarized, but the first launch needs network" >&2
+        STAPLED=0
+    }
     if [ -z "${SIGN_ID:-}" ]; then :
     elif [ -n "${NOTARY_PROFILE:-}" ]; then AUTH=(--keychain-profile "$NOTARY_PROFILE")
     elif [ -n "${NOTARY_KEY:-}" ]; then AUTH=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
@@ -63,7 +85,7 @@ dmg)
         ditto -c -k --keepParent "$APP" build/Headroom.zip
         xcrun notarytool submit build/Headroom.zip "${AUTH[@]}" --wait
         rm build/Headroom.zip
-        xcrun stapler staple "$APP"
+        staple "$APP"
     fi
 
     STAGE=build/dmg
@@ -82,8 +104,8 @@ dmg)
         exit 0
     fi
     xcrun notarytool submit "$DMG" "${AUTH[@]}" --wait
-    xcrun stapler staple "$DMG"
-    xcrun stapler validate "$DMG"
+    staple "$DMG"
+    [ "$STAPLED" = 0 ] || xcrun stapler validate "$DMG"
     spctl --assess --type open --context context:primary-signature --verbose "$DMG"
     echo "Notarized $DMG"
     ;;

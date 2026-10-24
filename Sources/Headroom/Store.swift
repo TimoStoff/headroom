@@ -105,7 +105,8 @@ final class Store: ObservableObject {
     @Published var opencodeUsage: UsageSummary?
     @Published var indexing: String?
     @Published var usageUpdated: Date?
-    @Published var update: (version: String, url: URL)?
+    /// Version of an update Sparkle found in the background, shown as a badge until its dialog is opened.
+    @Published var update: String?
     /// Keep awake: end of the manual session (.distantFuture = indefinitely), and whether working agents hold it.
     @Published var awakeUntil: Date?
     @Published var awakeForAgents = false

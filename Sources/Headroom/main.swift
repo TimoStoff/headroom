@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import ServiceManagement
+import Sparkle
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let store = Store()
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var currentInterval = 0.0
     private var snapshotDir: URL?
     private var hover: HoverController?
+    private lazy var updater = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: self)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Prefs.register()
@@ -53,13 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         refreshLimits()
         refreshUsage()
         refreshBedrock()
-        checkForUpdate()
+        if snapshotDir == nil { updater.startUpdater() }
         timers = [
             Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshLimits() },
             Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.refreshUsage() },
             // CloudWatch bills per metric requested, so poll gently (about $0.30 a month per region).
             Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in self?.refreshBedrock() },
-            Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in self?.checkForUpdate() },
         ]
         timers.forEach { $0.tolerance = 2 }
         if snapshotDir != nil {
@@ -110,12 +111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     }
 
-    /// Failures are ignored: a missed check just retries on the next timer.
-    private func checkForUpdate() {
-        guard let current = appVersion else { return }
-        Task { @MainActor in
-            if let u = try? await latestRelease(newerThan: current) { store.update = u }
-        }
+    private func checkForUpdates() {
+        // An accessory app has to come forward, or Sparkle's window opens behind the frontmost app.
+        NSApp.activate(ignoringOtherApps: true)
+        updater.checkForUpdates(nil)
     }
 
     // MARK: Limits and usage
@@ -278,7 +277,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             },
             configureBedrock: { [weak self] in self?.configureBedrock() },
             quit: { NSApp.terminate(nil) },
-            keepAwake: { [weak self] in self?.setAwake($0) }))
+            keepAwake: { [weak self] in self?.setAwake($0) },
+            checkForUpdates: { [weak self] in self?.checkForUpdates() }))
         let host = NSHostingController(rootView: view)
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host
@@ -289,6 +289,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         // Drop the SwiftUI tree so nothing renders while the popover is hidden.
         popover.contentViewController = nil
+    }
+}
+
+// MARK: - Updates
+
+/// Headroom has no Dock icon, so an update found by a scheduled check badges the dashboard footer instead of
+/// opening a window over whatever the user is doing (Sparkle's gentle reminders). The badge opens Sparkle's dialog.
+extension AppDelegate: SPUStandardUserDriverDelegate {
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool) -> Bool {
+        immediateFocus
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
+        if !handleShowingUpdate { store.update = update.displayVersionString }
+    }
+
+    func standardUserDriverWillFinishUpdateSession() {
+        store.update = nil
     }
 }
 
@@ -318,7 +338,8 @@ extension AppDelegate {
         }
         print("strip width pt:", strip.size.width)
 
-        let view = PopoverView(store: store, actions: PopoverActions(refresh: {}, configureBedrock: {}, quit: {}, keepAwake: { _ in }))
+        let view = PopoverView(store: store, actions: PopoverActions(refresh: {}, configureBedrock: {}, quit: {}, keepAwake: { _ in },
+                                                                 checkForUpdates: {}))
             .background(Color(nsColor: NSColor(white: 0.13, alpha: 1)))
             .environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: view)

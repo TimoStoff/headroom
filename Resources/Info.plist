@@ -17,7 +17,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.3</string>
 	<key>CFBundleVersion</key>
-	<string>4</string>
+	<string>1.3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -26,5 +26,13 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License, Headroom contributors</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/sandrich/headroom/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>uMJZTucWLRpctN3EY6DDj2dUSFUKV0yzacaHeGaKr1c=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>21600</integer>
 </dict>
 </plist>

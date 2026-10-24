@@ -23,6 +23,7 @@ struct PopoverActions {
     var configureBedrock: () -> Void
     var quit: () -> Void
     var keepAwake: (AwakeSession) -> Void
+    var checkForUpdates: () -> Void
 }
 
 /// One-line keep-awake state, shared by the footer and the menu bar hover.
@@ -624,6 +625,7 @@ struct Footer: View {
                 Button("AWS Bedrock...", action: actions.configureBedrock)
                 Toggle("Launch at login", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin))
                 Section(appVersion.map { "Headroom \($0)" } ?? "Headroom (development build)") {
+                    Button("Check for Updates...", action: actions.checkForUpdates)
                     Link("Release notes", destination: URL(string: "https://github.com/sandrich/headroom/releases"
                                                            + (appVersion.map { "/tag/v\($0)" } ?? ""))!)
                 }
@@ -650,8 +652,8 @@ struct Footer: View {
             .help("Keep awake (Option-click the menu bar item to toggle)")
 
             Spacer()
-            if let u = store.update {
-                Link("Update to \(u.version)", destination: u.url).help("Open the release page to download it")
+            if let v = store.update {
+                Button("Update to \(v)", action: actions.checkForUpdates).buttonStyle(.link)
             }
             Text(store.indexing ?? "Usage updated \(Fmt.ago(store.usageUpdated))")
                 .font(.system(size: 10)).foregroundStyle(.secondary)

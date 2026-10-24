@@ -62,6 +62,8 @@ Providers you do not use are hidden automatically.
 
 Releases are signed with a Developer ID and notarized by Apple, so they open without a warning. Releases up to 1.1 were not: macOS blocks their first launch once. Open **System Settings > Privacy & Security** and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/Headroom.app`.
 
+From 1.4 on, Headroom updates itself with [Sparkle](https://sparkle-project.org). It checks for a new release every 6 hours and shows **Update to x.y** in the dashboard footer when one is out; click it to install. **Check for Updates...** is under Settings. Versions before 1.4 only link to the release page, so updating to 1.4 is a manual download once.
+
 ## Build from source
 
 ```bash
@@ -70,7 +72,7 @@ Releases are signed with a Developer ID and notarized by Apple, so they open wit
 ./build.sh dmg        # packages build/Headroom-<version>.dmg
 ```
 
-Builds are universal (Apple Silicon and Intel). Local builds get an ad-hoc signature; set `SIGN_ID` (and a notary profile) to sign and notarize, see the top of `build.sh`. To publish a release, bump `CFBundleShortVersionString` in `Resources/Info.plist`, then push a matching tag such as `v1.1`; the release workflow builds the DMG and attaches it.
+Builds are universal (Apple Silicon and Intel). Local builds get an ad-hoc signature; set `SIGN_ID` (and a notary profile) to sign and notarize, see the top of `build.sh`. To publish a release, set both `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist` to the new version (Sparkle compares `CFBundleVersion`), then push a matching tag such as `v1.4`; the release workflow builds the DMG, attaches it, and attaches an `appcast.xml` update feed signed with the `SPARKLE_PRIVATE_KEY` secret. The matching private key lives in the maintainer's login keychain (Sparkle account `headroom`); keep a backup, since without it installed copies can no longer be updated.
 
 Headroom registers itself as a login item on first launch. Turn that off under Settings in the dashboard footer.
 
@@ -93,6 +95,7 @@ Everything is sampled locally and cheaply. Steady-state cost is around 1% of one
 | Codex tokens | `token_usage_record` lines in `~/.codex/sessions/**/rollout-*.jsonl` and `~/.codex/archived_sessions`, deduplicated by response id |
 | Bedrock (Claude Code) | Claude Code and Cowork transcripts whose message ids start with `msg_bdrk_`, kept apart from subscription usage |
 | Bedrock (account-wide) | `aws cloudwatch get-metric-data` with a `SEARCH` over the `AWS/Bedrock` token and invocation metrics for every Claude model id, hourly sums for 30 days, refreshed every 30 minutes and cached per region. Credentials stay with the AWS CLI (SSO, `credential_process` and so on all work). When CloudWatch has data it replaces the local Bedrock figures, since it already includes them. |
+| Updates | [Sparkle](https://sparkle-project.org), reading `appcast.xml` from the latest GitHub release; updates are verified against the EdDSA public key in `Info.plist` |
 | Prices | [LiteLLM's model price list](https://github.com/BerriAI/litellm), refreshed daily |
 
 ### Accuracy notes

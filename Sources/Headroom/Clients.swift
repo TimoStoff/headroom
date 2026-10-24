@@ -445,19 +445,3 @@ final class BedrockClient {
         return ClientError.notLoggedIn(line.map { String($0.prefix(120)) } ?? "AWS CLI failed")
     }
 }
-
-// MARK: - Updates
-
-/// Newest GitHub release, if it is newer than the running build. Unauthenticated (60 requests an hour per IP).
-func latestRelease(newerThan current: String) async throws -> (version: String, url: URL)? {
-    let json = try await getJSON(URL(string: "https://api.github.com/repos/sandrich/headroom/releases/latest")!,
-                                 headers: ["Accept": "application/vnd.github+json", "User-Agent": "headroom"])
-    guard let tag = json.string("tag_name"), let url = json.string("html_url").flatMap(URL.init(string:)),
-          isNewer(tag, than: current) else { return nil }
-    return (String(tag.drop { $0 == "v" }), url)
-}
-
-/// "v1.10" is newer than "1.9".
-func isNewer(_ tag: String, than current: String) -> Bool {
-    String(tag.drop { $0 == "v" }).compare(current, options: .numeric) == .orderedDescending
-}
