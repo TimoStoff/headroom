@@ -160,7 +160,8 @@ enum StatusRenderer {
             NSBezierPath(roundedRect: nub, xRadius: 0.75, yRadius: 0.75).fill()
             let inner = r.insetBy(dx: 1.75, dy: 1.75)
             let fill = NSRect(x: inner.minX, y: inner.minY, width: max(1, inner.width * min(b.percent, 100) / 100), height: inner.height)
-            tint(b.percent <= 20 && !b.charging ? .systemRed : Palette.battery).setFill()
+            // Like the system battery: neutral fill, green while charging, red when low.
+            tint(b.percent <= 20 && !b.charging ? .systemRed : b.charging ? .systemGreen : nil).setFill()
             NSBezierPath(roundedRect: fill, xRadius: 1, yRadius: 1).fill()
             if b.charging, let bolt = symbol("bolt.fill")?.withSymbolConfiguration(.init(pointSize: 8, weight: .black)) {
                 // Knock the bolt out of the fill so it reads on any tint.
