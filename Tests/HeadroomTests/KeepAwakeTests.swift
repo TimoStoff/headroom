@@ -93,7 +93,7 @@ final class KeepAwakeTests {
         let store = Store()
         #expect(awakeStatus(store) == "Sleep allowed")
         store.awakeForAgents = true
-        #expect(awakeStatus(store) == "Awake while Claude Code or Grok works")
+        #expect(awakeStatus(store) == "Awake while Claude Code, Grok or Codex works")
         store.awakeUntil = .distantFuture
         #expect(awakeStatus(store) == "Awake indefinitely")
         store.awakeUntil = Date().addingTimeInterval(3600 + 30)

@@ -2,6 +2,8 @@ import AppKit
 
 /// Draws the menu bar strip as one template image: SF Symbol, value, and (for CPU/GPU) a tiny live graph,
 /// all on a single line. Being a template, macOS tints it exactly like the other menu bar items.
+/// With colors on, it is a plain image instead: icons and graphs take each item's dashboard color, values stay
+/// black or white for the menu bar's appearance and turn orange or red as they near their limit.
 enum StatusRenderer {
     static let height: CGFloat = 22
     private static let font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
@@ -13,32 +15,38 @@ enum StatusRenderer {
 
     private typealias Segment = (width: CGFloat, draw: (CGFloat) -> Void)
 
-    static func render(_ store: Store) -> NSImage {
+    static func render(_ store: Store, dark: Bool) -> NSImage {
+        colored = Prefs.bool(Prefs.colorMenuBar)
+        ink = colored && dark ? .white : .black
         var segments: [Segment] = []
         var kinds: [SegmentKind] = []
         func add(_ k: SegmentKind, _ seg: Segment) { kinds.append(k); segments.append(seg) }
 
         if Prefs.bool(Prefs.showCPU) {
-            add(.cpu, metric(symbol: "cpu", fallback: "CPU", value: store.cpu?.total,
+            add(.cpu, metric(symbol: "cpu", fallback: "CPU", tint: Palette.cpu, value: store.cpu?.total,
                                    history: store.cpuHistory.map(\.v)))
         }
         if Prefs.bool(Prefs.showGPU) {
-            add(.gpu, metric(symbol: "cube", fallback: "GPU", value: store.gpu,
+            add(.gpu, metric(symbol: "cube", fallback: "GPU", tint: Palette.gpu, value: store.gpu,
                                    history: store.gpuHistory.map(\.v)))
         }
         if Prefs.bool(Prefs.showMem) {
-            add(.memory, metric(symbol: "memorychip", fallback: "MEM", value: store.memory?.percent, history: nil))
+            add(.memory, metric(symbol: "memorychip", fallback: "MEM", tint: Palette.mem, value: store.memory?.percent, history: nil))
         }
         if Prefs.bool(Prefs.showBattery), let b = store.battery {
             add(.battery, battery(b))
         }
         if Prefs.bool(Prefs.showClaude), store.claudeAvailable {
             let l = store.claudeLimits
-            add(.claude, gauges(symbol: "sparkle", fallback: "CC",
+            add(.claude, gauges(symbol: "sparkle", fallback: "CC", tint: Palette.claude,
                                    values: [l?.session?.percent, l?.weekly?.percent, l?.model?.percent]))
         }
         if Prefs.bool(Prefs.showGrok), store.grokAvailable {
-            add(.grok, gauges(symbol: "bolt.horizontal.circle", fallback: "GK", values: [store.grokPlan?.percent]))
+            add(.grok, gauges(symbol: "bolt.horizontal.circle", fallback: "GK", tint: Palette.grok, values: [store.grokPlan?.percent]))
+        }
+        if Prefs.bool(Prefs.showCodex), store.codexAvailable {
+            add(.codex, gauges(symbol: "chevron.left.forwardslash.chevron.right", fallback: "CX", tint: Palette.codex,
+                               values: store.codexLimits?.all.map(\.percent) ?? [nil]))
         }
         if store.awake {
             add(.awake, icon("cup.and.saucer.fill", "AW"))
@@ -62,7 +70,7 @@ enum StatusRenderer {
         NSGraphicsContext.restoreGraphicsState()
         let image = NSImage(size: size)
         image.addRepresentation(rep)
-        image.isTemplate = true
+        image.isTemplate = !colored
         lastSegments = segmentRanges(segments, kinds: kinds)
         return image
     }
@@ -80,20 +88,27 @@ enum StatusRenderer {
 
     // MARK: Pieces
 
-    private static let ink = NSColor.black
+    private static var colored = false
+    /// Black for template drawing; with colors on, whatever reads on the menu bar's appearance.
+    private static var ink = NSColor.black
+
+    /// An item's color when colors are on, otherwise the template ink.
+    private static func tint(_ c: NSColor?) -> NSColor { colored ? c ?? ink : ink }
 
     private static var symbolCache: [String: NSImage] = [:]
 
-    private static func symbol(_ name: String) -> NSImage? {
-        if let img = symbolCache[name] { return img }
-        let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(symbolConfig)
-        symbolCache[name] = img
+    private static func symbol(_ name: String, color: NSColor? = nil) -> NSImage? {
+        let key = color.map { "\(name)|\($0)" } ?? name
+        if let img = symbolCache[key] { return img }
+        let config = color.map { symbolConfig.applying(.init(paletteColors: [$0])) } ?? symbolConfig
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        symbolCache[key] = img
         return img
     }
 
     /// Symbol (or a short text fallback) vertically centered. Returns width and drawer.
-    private static func icon(_ name: String, _ fallback: String) -> Segment {
-        if let img = symbol(name) {
+    private static func icon(_ name: String, _ fallback: String, tint t: NSColor? = nil) -> Segment {
+        if let img = symbol(name, color: colored ? tint(t) : nil) {
             let s = img.size
             return (s.width, { x in img.draw(in: NSRect(x: x, y: (height - s.height) / 2, width: s.width, height: s.height)) })
         }
@@ -102,13 +117,13 @@ enum StatusRenderer {
         return (w, { x in t.draw(at: NSPoint(x: x, y: (height - t.size().height) / 2)) })
     }
 
-    private static func text(_ s: String, _ f: NSFont = font) -> NSAttributedString {
-        NSAttributedString(string: s, attributes: [.font: f, .foregroundColor: ink])
+    private static func text(_ s: String, _ f: NSFont = font, color: NSColor? = nil) -> NSAttributedString {
+        NSAttributedString(string: s, attributes: [.font: f, .foregroundColor: color ?? ink])
     }
 
-    /// Value sized for two digits so the strip only grows at 100%.
-    private static func value(_ v: Double?) -> Segment {
-        let t = text(v.map { "\(Int($0.rounded()))%" } ?? "--")
+    /// Value sized for two digits so the strip only grows at 100%. `warn` colors it as it nears 100%.
+    private static func value(_ v: Double?, warn: Bool = true) -> Segment {
+        let t = text(v.map { "\(Int($0.rounded()))%" } ?? "--", color: warn ? tint(Palette.severity(v, base: ink)) : nil)
         let w = max(ceil(t.size().width), ceil(text("88%").size().width))
         return (w, { x in t.draw(at: NSPoint(x: x, y: (height - t.size().height) / 2)) })
     }
@@ -121,11 +136,12 @@ enum StatusRenderer {
         })
     }
 
-    private static func metric(symbol: String, fallback: String, value v: Double?, history: [Double]?) -> Segment {
-        var parts = [icon(symbol, fallback), value(v)]
+    private static func metric(symbol: String, fallback: String, tint t: NSColor, value v: Double?, history: [Double]?) -> Segment {
+        var parts = [icon(symbol, fallback, tint: t), value(v)]
         if let history {
             parts.append((graphSize.width, { x in
-                sparkline(NSRect(x: x, y: (height - graphSize.height) / 2, width: graphSize.width, height: graphSize.height), history)
+                sparkline(NSRect(x: x, y: (height - graphSize.height) / 2, width: graphSize.width, height: graphSize.height),
+                          history, color: tint(t))
             }))
         }
         return row(parts, spacing: 2)
@@ -144,7 +160,7 @@ enum StatusRenderer {
             NSBezierPath(roundedRect: nub, xRadius: 0.75, yRadius: 0.75).fill()
             let inner = r.insetBy(dx: 1.75, dy: 1.75)
             let fill = NSRect(x: inner.minX, y: inner.minY, width: max(1, inner.width * min(b.percent, 100) / 100), height: inner.height)
-            ink.setFill()
+            tint(b.percent <= 20 && !b.charging ? .systemRed : Palette.battery).setFill()
             NSBezierPath(roundedRect: fill, xRadius: 1, yRadius: 1).fill()
             if b.charging, let bolt = symbol("bolt.fill")?.withSymbolConfiguration(.init(pointSize: 8, weight: .black)) {
                 // Knock the bolt out of the fill so it reads on any tint.
@@ -153,11 +169,11 @@ enum StatusRenderer {
                           from: .zero, operation: .destinationOut, fraction: 1)
             }
         })
-        return row([glyph, value(b.percent)], spacing: 3)
+        return row([glyph, value(b.percent, warn: false)], spacing: 3)
     }
 
     /// Symbol plus one slim vertical gauge per value (Claude: 5h, week, model; Grok: credits).
-    private static func gauges(symbol name: String, fallback: String, values: [Double?]) -> Segment {
+    private static func gauges(symbol name: String, fallback: String, tint t: NSColor, values: [Double?]) -> Segment {
         let barW: CGFloat = 3, barH: CGFloat = 14, spacing: CGFloat = 1.5
         let w = CGFloat(values.count) * barW + CGFloat(values.count - 1) * spacing
         let bars: Segment = (w, { x in
@@ -167,14 +183,14 @@ enum StatusRenderer {
                 NSBezierPath(roundedRect: r, xRadius: 1, yRadius: 1).fill()
                 guard let v else { continue }
                 let f = NSRect(x: r.minX, y: r.minY, width: barW, height: max(1.5, barH * min(max(v, 0), 100) / 100))
-                ink.setFill()
+                tint(Palette.severity(v, base: t)).setFill()
                 NSBezierPath(roundedRect: f, xRadius: 1, yRadius: 1).fill()
             }
         })
-        return row([icon(name, fallback), bars], spacing: 3)
+        return row([icon(name, fallback, tint: t), bars], spacing: 3)
     }
 
-    private static func sparkline(_ r: NSRect, _ values: [Double]) {
+    private static func sparkline(_ r: NSRect, _ values: [Double], color: NSColor) {
         let frame = NSBezierPath(roundedRect: r, xRadius: 2, yRadius: 2)
         ink.withAlphaComponent(0.12).setFill()
         frame.fill()
@@ -193,7 +209,7 @@ enum StatusRenderer {
         points.forEach { area.line(to: $0) }
         area.line(to: NSPoint(x: points[points.count - 1].x, y: r.minY))
         area.close()
-        ink.withAlphaComponent(0.55).setFill()
+        color.withAlphaComponent(0.55).setFill()
         area.fill()
 
         let line = NSBezierPath()
@@ -201,7 +217,7 @@ enum StatusRenderer {
         points.dropFirst().forEach { line.line(to: $0) }
         line.lineWidth = 1
         line.lineJoinStyle = .round
-        ink.setStroke()
+        color.setStroke()
         line.stroke()
         NSGraphicsContext.restoreGraphicsState()
     }

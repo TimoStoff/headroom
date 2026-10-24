@@ -151,6 +151,7 @@ struct HoverView: View {
                 } else {
                     Text(store.grokError ?? "Loading").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
+            case .codex: limits(store.codexLimits?.all ?? [], error: store.codexError)
             case .awake:
                 VStack(alignment: .leading, spacing: 3) {
                     Text(awakeStatus(store))
@@ -176,6 +177,7 @@ struct HoverView: View {
         case .battery: return "ENERGY SHARE"
         case .claude: return "CLAUDE LIMITS"
         case .grok: return "GROK CREDITS"
+        case .codex: return "CODEX LIMITS"
         case .awake: return "KEEP AWAKE"
         }
     }

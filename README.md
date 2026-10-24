@@ -51,6 +51,7 @@ Providers you do not use are hidden automatically.
 - Xcode command line tools (Swift 5.9+)
 - Optional: [Claude Code](https://claude.com/claude-code) signed in with a Claude subscription
 - Optional: the [Grok CLI](https://x.ai/cli) signed in (`grok login`)
+- Optional: Codex signed in, through the ChatGPT desktop app or the Codex CLI (`codex login`)
 - Optional: the [AWS CLI](https://aws.amazon.com/cli/) with a profile that can call `cloudwatch:GetMetricData` in your Bedrock regions
 
 ## Install
@@ -88,6 +89,8 @@ Everything is sampled locally and cheaply. Steady-state cost is around 1% of one
 | Claude Code tokens | `~/.claude/projects/**/*.jsonl`, plus Cowork sessions from the desktop app (`~/Library/Application Support/Claude*/local-agent-mode-sessions/**/.claude/projects`), tailed incrementally by byte offset and cached in `~/Library/Application Support/Headroom` |
 | Grok credits | The billing endpoint the Grok CLI's `/usage` uses, with the CLI's token from `~/.grok/auth.json`. If that token has expired, Headroom runs `grok models` once so the CLI refreshes it; Headroom never writes the file. |
 | Grok tokens | `~/.grok/sessions/*/*/usage.json` |
+| Codex limits | The usage endpoint Codex itself uses (`chatgpt.com/backend-api/wham/usage`), with the ChatGPT token from `~/.codex/auth.json`, written by the Codex CLI or the ChatGPT desktop app. Headroom never refreshes or writes it. |
+| Codex tokens | `token_usage_record` lines in `~/.codex/sessions/**/rollout-*.jsonl` and `~/.codex/archived_sessions`, deduplicated by response id |
 | Bedrock (Claude Code) | Claude Code and Cowork transcripts whose message ids start with `msg_bdrk_`, kept apart from subscription usage |
 | Bedrock (account-wide) | `aws cloudwatch get-metric-data` with a `SEARCH` over the `AWS/Bedrock` token and invocation metrics for every Claude model id, hourly sums for 30 days, refreshed every 30 minutes and cached per region. Credentials stay with the AWS CLI (SSO, `credential_process` and so on all work). When CloudWatch has data it replaces the local Bedrock figures, since it already includes them. |
 | Prices | [LiteLLM's model price list](https://github.com/BerriAI/litellm), refreshed daily |
@@ -110,7 +113,7 @@ CloudWatch charges $0.01 per 1,000 metrics requested. Each refresh requests one 
 
 ### Caveats
 
-The Claude and Grok usage endpoints are not public APIs. They may change without notice, in which case those sections show the last known values and an error until Headroom is updated.
+The Claude, Grok and Codex usage endpoints are not public APIs. They may change without notice, in which case those sections show the last known values and an error until Headroom is updated.
 
 ## Development
 

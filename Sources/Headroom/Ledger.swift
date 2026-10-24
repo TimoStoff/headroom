@@ -86,6 +86,7 @@ func modelFamily(_ model: String) -> String {
     for f in ["opus", "fable", "sonnet", "haiku", "mythos"] where m.contains(f) { return f.prefix(1).uppercased() + f.dropFirst() }
     if m.hasPrefix("grok") { return "Grok" }
     if m.hasPrefix("glm") { return "GLM" }
+    if m.hasPrefix("gpt") { return "GPT" }
     return model
 }
 
@@ -113,7 +114,7 @@ final class Pricing {
         let age = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
             .map { -$0.timeIntervalSinceNow } ?? .infinity
         // A table cached before GLM prices were kept has no zai/ rows; fetch it again.
-        if age > 86400 || !table.keys.contains(where: { $0.hasPrefix("zai/") }) { Task.detached { await self.download() } }
+        if age > 86400 || !table.keys.contains(where: { $0.hasPrefix("zai/") }) || !table.keys.contains(where: { $0.hasPrefix("gpt-") }) { Task.detached { await self.download() } }
     }
 
     private func download() async {
@@ -121,8 +122,8 @@ final class Pricing {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         var t: [String: Price] = [:]
         // Bedrock ids (`anthropic.claude-...`, `au.anthropic.claude-...-v1:0`) carry regional prices.
-        // `zai/glm-...` prices the GLM models OpenCode runs, looked up by bare id below.
-        for (k, v) in json where k.hasPrefix("claude") || k.contains("anthropic.claude") || k.hasPrefix("zai/") {
+        // `zai/glm-...` prices the GLM models OpenCode runs, looked up by bare id below; `gpt-...` the Codex models.
+        for (k, v) in json where k.hasPrefix("claude") || k.contains("anthropic.claude") || k.hasPrefix("zai/") || k.hasPrefix("gpt-") {
             guard let v = v as? [String: Any], let input = v.double("input_cost_per_token"),
                   let output = v.double("output_cost_per_token") else { continue }
             let write = v.double("cache_creation_input_token_cost") ?? input * 1.25
@@ -160,7 +161,7 @@ final class Pricing {
 
 // MARK: - Ledger
 
-/// Incremental token ledger over Claude Code transcripts, Grok session usage files and the OpenCode database.
+/// Incremental token ledger over Claude Code transcripts, Grok session usage files, Codex rollouts and the OpenCode database.
 /// Claude: tail-reads ~/.claude/projects/**/*.jsonl by byte offset, dedupes on message id + request id
 /// (same rule as ccusage), and buckets per hour and model. State is cached on disk so relaunches are instant.
 /// Turns Claude Code ran through AWS Bedrock (message ids `msg_bdrk_...`) are kept apart under `bedrock/<model>`.
@@ -178,6 +179,8 @@ final class Ledger {
     }
     private struct GrokTurn { var key: String; var hour: Int; var model: String; var agg: Agg }
     private struct GrokFile { var mtime: Date; var turns: [GrokTurn] }
+    struct CodexTurn { var key: String; var hour: Int; var model: String; var agg: Agg }
+    private struct CodexFile { var mtime: Date; var turns: [CodexTurn] }
 
     static let retentionDays = 32
 
@@ -187,16 +190,17 @@ final class Ledger {
     private var dirty = false
     private var lastSave = Date.distantPast
     private var grokFiles: [String: GrokFile] = [:]
+    private var codexFiles: [String: CodexFile] = [:]
     private var opencodeHours: [Int: [String: Agg]] = [:]
     private var opencodeStamp = Date.distantPast
     /// Transcripts modified in the last two hours; tailed on every refresh between full scans.
     private var hotFiles: Set<String> = []
     private var lastFullScan = Date.distantPast
-    /// Newest transcript write seen (Claude, Grok or OpenCode), used to tell when an agent is working.
+    /// Newest transcript write seen (Claude, Grok, Codex or OpenCode), used to tell when an agent is working.
     private var lastActivity = Date.distantPast
     private var changeCounter = 0
     private var lastSummaryKey = ""
-    private var cachedSummaries: (UsageSummary, UsageSummary, UsageSummary, UsageSummary)?
+    private var cachedSummaries: (UsageSummary, UsageSummary, UsageSummary, UsageSummary, UsageSummary)?
     private let cacheFile = appSupportDir.appendingPathComponent("claude-ledger.json")
     private let usageNeedle = Array(#""usage":{"#.utf8)
 
@@ -231,19 +235,21 @@ final class Ledger {
     /// Scans for new data and returns summaries. `progress` reports indexing on first run.
     func refresh(windowStart: Date?, progress: @escaping (String?) -> Void,
                  completion: @escaping (_ claude: UsageSummary, _ grok: UsageSummary, _ bedrock: UsageSummary,
-                                        _ opencode: UsageSummary, _ lastActivity: Date) -> Void) {
+                                        _ opencode: UsageSummary, _ codex: UsageSummary, _ lastActivity: Date) -> Void) {
         queue.async { [self] in
             if !loaded { loadCache(); loaded = true }
             let full = Date().timeIntervalSince(lastFullScan) >= 300
             if full {
                 scanClaude(progress: progress)
                 scanGrok()
+                scanCodex()
                 scanOpenCode()
                 lastFullScan = Date()
             } else {
                 discoverNewFiles()
                 tailHotFiles()
                 scanGrok()
+                scanCodex()
                 scanOpenCode()
             }
             // Encoding the cache is the most expensive step, so only persist occasionally (and on quit).
@@ -257,11 +263,12 @@ final class Ledger {
                 cachedSummaries = (Self.summarize(claudeHours(bedrock: false), windowStart: windowStart),
                                    Self.summarize(grokHours(), windowStart: nil),
                                    Self.summarize(claudeHours(bedrock: true), windowStart: nil),
-                                   Self.summarize(opencodeHours, windowStart: nil))
+                                   Self.summarize(opencodeHours, windowStart: nil),
+                                   Self.summarize(codexHours(), windowStart: nil))
                 lastSummaryKey = key
             }
             let c = cachedSummaries!
-            completion(c.0, c.1, c.2, c.3, lastActivity)
+            completion(c.0, c.1, c.2, c.3, c.4, lastActivity)
         }
     }
 
@@ -489,6 +496,64 @@ final class Ledger {
         var seen = Set<String>()
         var hours: [Int: [String: Agg]] = [:]
         for f in grokFiles.values {
+            for t in f.turns where seen.insert(t.key).inserted {
+                hours[t.hour, default: [:]][t.model, default: Agg()].add(t.agg)
+            }
+        }
+        return hours
+    }
+
+    // MARK: Codex
+
+    /// Codex (CLI and the ChatGPT desktop app) writes one rollout per thread under ~/.codex/sessions/YYYY/MM/DD,
+    /// moved to archived_sessions when archived. Rollouts are re-parsed whenever their mtime changes.
+    private func scanCodex() {
+        let cutoff = Date().addingTimeInterval(-Double(Self.retentionDays) * 86400)
+        var present = Set<String>()
+        for dir in ["sessions", "archived_sessions"] {
+            let root = homeDir.appendingPathComponent(".codex/\(dir)")
+            guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
+            for case let url as URL in files where url.pathExtension == "jsonl" {
+                guard let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                      mtime >= cutoff else { continue }
+                present.insert(url.path)
+                lastActivity = max(lastActivity, mtime)
+                if codexFiles[url.path]?.mtime == mtime { continue }
+                codexFiles[url.path] = CodexFile(mtime: mtime, turns: Self.parseCodexRollout(url))
+                changeCounter += 1
+            }
+        }
+        codexFiles = codexFiles.filter { present.contains($0.key) }
+    }
+
+    /// One `token_usage_record` per model response; the model comes from the preceding `turn_context`.
+    /// `input_tokens` includes the cached part and `output_tokens` the reasoning part, as in the OpenAI API.
+    static func parseCodexRollout(_ url: URL) -> [CodexTurn] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        var model = "gpt"
+        var turns: [CodexTurn] = []
+        for line in text.split(separator: "\n") {
+            // Cheap prefilter; most lines are messages and tool output.
+            guard line.contains("\"turn_context\"") || line.contains("\"token_usage_record\""),
+                  let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let p = o.dict("payload") else { continue }
+            if o.string("type") == "turn_context" { model = p.string("model") ?? model; continue }
+            guard o.string("type") == "token_usage_record", let u = p.dict("usage"),
+                  let date = ISO.parse(o.string("timestamp")) else { continue }
+            let cached = u.int("cached_input_tokens"), write = u.int("cache_write_input_tokens")
+            let agg = Agg(input: max(u.int("input_tokens") - cached - write, 0), output: u.int("output_tokens"),
+                          cacheWrite5m: write, cacheRead: cached, calls: 1)
+            // Forked threads copy their parent's records, so dedupe on the response id.
+            let key = p.string("response_id") ?? "\(o.string("timestamp") ?? "")|\(u.int("total_tokens"))"
+            turns.append(CodexTurn(key: key, hour: Int(date.timeIntervalSince1970 / 3600), model: model, agg: agg))
+        }
+        return turns
+    }
+
+    private func codexHours() -> [Int: [String: Agg]] {
+        var seen = Set<String>()
+        var hours: [Int: [String: Agg]] = [:]
+        for f in codexFiles.values {
             for t in f.turns where seen.insert(t.key).inserted {
                 hours[t.hour, default: [:]][t.model, default: Agg()].add(t.agg)
             }

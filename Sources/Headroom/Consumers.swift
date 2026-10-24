@@ -3,7 +3,7 @@ import Darwin
 import IOKit
 
 enum SegmentKind {
-    case cpu, gpu, memory, battery, claude, grok, awake
+    case cpu, gpu, memory, battery, claude, grok, codex, awake
 }
 
 struct Consumer: Identifiable {

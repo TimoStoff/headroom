@@ -5,7 +5,7 @@ import Testing
 struct UsageTests {
     @Test(arguments: [
         ("claude-opus-5-5", "Opus"), ("claude-fable-5-1", "Fable"), ("claude-sonnet-5", "Sonnet"),
-        ("claude-haiku-4-5-20251001", "Haiku"), ("grok-4.6-build", "Grok"), ("some-other-model", "some-other-model"),
+        ("claude-haiku-4-5-20251001", "Haiku"), ("grok-4.6-build", "Grok"), ("gpt-6-luna", "GPT"), ("some-other-model", "some-other-model"),
     ])
     func modelFamilies(_ model: String, _ family: String) {
         #expect(modelFamily(model) == family)

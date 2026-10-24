@@ -220,6 +220,49 @@ final class GrokClient {
     }
 }
 
+// MARK: - Codex plan limits
+
+struct CodexLimits {
+    var all: [LimitEntry]
+    var plan: String?
+    var fetchedAt: Date
+}
+
+/// Reads Codex rate limits with the ChatGPT token in ~/.codex/auth.json (shared by the Codex CLI and the
+/// ChatGPT desktop app), from the endpoint Codex's own usage view calls. Codex owns the token; this never writes it.
+final class CodexClient {
+    func fetch() async throws -> CodexLimits {
+        guard let data = try? Data(contentsOf: homeDir.appendingPathComponent(".codex/auth.json")),
+              let tokens = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?.dict("tokens"),
+              let token = tokens.string("access_token") else { throw ClientError.notConfigured }
+        var headers = ["Authorization": "Bearer \(token)", "Accept": "application/json", "User-Agent": "codex-cli headroom"]
+        headers["ChatGPT-Account-Id"] = tokens.string("account_id")
+        return Self.parse(try await getJSON(URL(string: "https://chatgpt.com/backend-api/wham/usage")!, headers: headers))
+    }
+
+    static func parse(_ json: [String: Any], now: Date = Date()) -> CodexLimits {
+        let rl = json.dict("rate_limit")
+        let all = [("primary", rl?.dict("primary_window")), ("secondary", rl?.dict("secondary_window"))].compactMap { id, w -> LimitEntry? in
+            guard let w else { return nil }
+            let window = w.double("limit_window_seconds")
+            return LimitEntry(id: id, name: windowName(window), percent: w.double("used_percent") ?? 0,
+                              resetsAt: w.double("reset_at").map { Date(timeIntervalSince1970: $0) }, window: window)
+        }
+        return CodexLimits(all: all, plan: json.string("plan_type")?.capitalized, fetchedAt: now)
+    }
+
+    /// Paid plans have a 5h and a weekly window, the free plan a single 30-day one.
+    static func windowName(_ seconds: Double?) -> String {
+        guard let h = seconds.map({ Int($0 / 3600) }), h > 0 else { return "Limit" }
+        switch h {
+        case 5: return "Session (5h)"
+        case 168: return "Weekly"
+        case 720: return "Monthly"
+        default: return h % 24 == 0 ? "\(h / 24) days" : "\(h)h"
+        }
+    }
+}
+
 // MARK: - AWS Bedrock usage
 
 /// Which AWS profile and regions to read Bedrock metrics from.

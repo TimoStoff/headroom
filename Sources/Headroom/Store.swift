@@ -15,7 +15,10 @@ enum Prefs {
     static let showBattery = "show.battery"
     static let showClaude = "show.claude"
     static let showGrok = "show.grok"
+    static let showCodex = "show.codex"
     static let interval = "interval"
+    /// Draw the menu bar strip in color instead of as a monochrome template.
+    static let colorMenuBar = "menubar.color"
     static let awakeForAgents = "awake.agents"
     static let awakeDisplay = "awake.display"
     /// AWS profile and comma-separated regions for Bedrock CloudWatch metrics; empty means auto-detect.
@@ -25,7 +28,7 @@ enum Prefs {
     static func register() {
         UserDefaults.standard.register(defaults: [
             showCPU: true, showGPU: false, showMem: true, showBattery: false,
-            showClaude: true, showGrok: true, interval: 1.0,
+            showClaude: true, showGrok: true, showCodex: true, colorMenuBar: false, interval: 1.0,
             awakeForAgents: false, awakeDisplay: false,
         ])
     }
@@ -43,6 +46,7 @@ enum Palette {
     static let grok = NSColor(srgbRed: 0.62, green: 0.66, blue: 0.74, alpha: 1)
     static let bedrock = NSColor(srgbRed: 1.00, green: 0.60, blue: 0.00, alpha: 1)
     static let opencode = NSColor(srgbRed: 0.95, green: 0.45, blue: 0.70, alpha: 1)
+    static let codex = NSColor(srgbRed: 0.40, green: 0.80, blue: 0.75, alpha: 1)
 
     static func severity(_ pct: Double?, base: NSColor) -> NSColor {
         guard let pct else { return base }
@@ -58,6 +62,7 @@ enum Palette {
         case "Mythos": return Color(nsColor: battery)
         case "Grok": return Color(nsColor: grok)
         case "GLM": return Color(nsColor: opencode)
+        case "GPT": return Color(nsColor: codex)
         default:
             // Anything else (Grok models, older ids) gets a distinct color by position.
             let others: [NSColor] = [.systemTeal, .systemPink, .systemYellow, .systemIndigo]
@@ -86,6 +91,10 @@ final class Store: ObservableObject {
     @Published var grokPlan: GrokPlan?
     @Published var grokError: String?
     @Published var grokUsage: UsageSummary?
+    @Published var codexAvailable = false
+    @Published var codexLimits: CodexLimits?
+    @Published var codexError: String?
+    @Published var codexUsage: UsageSummary?
     /// Account-wide Bedrock usage from CloudWatch, and the subset Claude Code logged locally.
     @Published var bedrockCloud: BedrockUsage?
     @Published var bedrockCloudUsage: UsageSummary?

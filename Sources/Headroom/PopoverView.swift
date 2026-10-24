@@ -11,6 +11,7 @@ extension Color {
     static let grok = Color(nsColor: Palette.grok)
     static let bedrock = Color(nsColor: Palette.bedrock)
     static let opencode = Color(nsColor: Palette.opencode)
+    static let codex = Color(nsColor: Palette.codex)
 
     static func severity(_ pct: Double, base: Color) -> Color {
         pct >= 90 ? .red : pct >= 75 ? .orange : base
@@ -30,7 +31,7 @@ func awakeStatus(_ store: Store) -> String {
         if until == .distantFuture { return "Awake indefinitely" }
         return "Awake for \(Fmt.until(until)), until \(until.formatted(date: .omitted, time: .shortened))"
     }
-    return store.awakeForAgents ? "Awake while Claude Code or Grok works" : "Sleep allowed"
+    return store.awakeForAgents ? "Awake while Claude Code, Grok or Codex works" : "Sleep allowed"
 }
 
 struct PopoverView: View {
@@ -419,12 +420,24 @@ struct LimitsCard: View {
                     Text("\(err), showing data from \(Fmt.ago(store.grokPlan?.fetchedAt))").font(.system(size: 10)).foregroundStyle(.orange)
                 }
             }
-            if store.bedrockAvailable {
+            if store.codexAvailable {
                 if store.claudeAvailable || store.grokAvailable { Divider().opacity(0.5) }
+                CardHeader(title: "Codex", icon: "chevron.left.forwardslash.chevron.right", tint: .codex, trailing: store.codexLimits?.plan)
+                if let l = store.codexLimits {
+                    ForEach(l.all) { LimitRow(entry: $0, tint: .codex) }
+                } else {
+                    Text(store.codexError ?? "Loading limits...").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                if let err = store.codexError, store.codexLimits != nil {
+                    Text("\(err), showing data from \(Fmt.ago(store.codexLimits?.fetchedAt))").font(.system(size: 10)).foregroundStyle(.orange)
+                }
+            }
+            if store.bedrockAvailable {
+                if store.claudeAvailable || store.grokAvailable || store.codexAvailable { Divider().opacity(0.5) }
                 BedrockSection(store: store)
             }
-            if !store.claudeAvailable && !store.grokAvailable && !store.bedrockAvailable {
-                Text("No Claude Code, Grok or AWS Bedrock account found").font(.system(size: 11)).foregroundStyle(.secondary)
+            if !store.claudeAvailable && !store.grokAvailable && !store.codexAvailable && !store.bedrockAvailable {
+                Text("No Claude Code, Grok, Codex or AWS Bedrock account found").font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
         .padding(12)
@@ -480,15 +493,13 @@ struct UsageCard: View {
     var body: some View {
         let grok = store.grokAvailable ? store.grokUsage : nil
         let bedrock = store.bedrockUsage
-        // Bedrock-only setups have no subscription traffic; drop the empty Claude row then.
-        let claude = (store.claudeUsage?.month.tokens ?? 0) > 0 || bedrock == nil ? store.claudeUsage : nil
+        // Setups without a Claude subscription (Bedrock, Codex or Grok only) would show an empty Claude row.
+        let claude = (store.claudeUsage?.month.tokens ?? 0) > 0 || store.claudeAvailable ? store.claudeUsage : nil
         let opencode = (store.opencodeUsage?.month.tokens ?? 0) > 0 ? store.opencodeUsage : nil
-        let combined = [grok, bedrock, opencode].reduce(claude, UsageSummary.combine)
-        let names = [claude.map { _ in "Claude" }, grok.map { _ in "Grok" }, bedrock.map { _ in "Bedrock" },
-                     opencode.map { _ in "OpenCode" }].compactMap { $0 }
+        let codex = (store.codexUsage?.month.tokens ?? 0) > 0 ? store.codexUsage : nil
+        let combined = [grok, bedrock, opencode, codex].reduce(claude, UsageSummary.combine)
         VStack(alignment: .leading, spacing: 10) {
-            CardHeader(title: "Token usage", icon: "chart.bar.xaxis", tint: .claude,
-                       trailing: names == ["Claude"] ? "Claude Code" : names.joined(separator: " + "))
+            CardHeader(title: "Token usage", icon: "chart.bar.xaxis", tint: .claude)
             HStack(spacing: 6) {
                 StatTile(title: "Today", totals: combined?.today)
                 StatTile(title: "7 days", totals: combined?.week)
@@ -499,6 +510,7 @@ struct UsageCard: View {
                 if grok != nil { ProviderRow(name: "Grok", color: .grok, summary: grok) }
                 if bedrock != nil { ProviderRow(name: "Bedrock", color: .bedrock, summary: bedrock) }
                 if opencode != nil { ProviderRow(name: "OpenCode", color: .opencode, summary: opencode) }
+                if codex != nil { ProviderRow(name: "Codex", color: .codex, summary: codex) }
             }
             if let w = store.claudeUsage?.window {
                 HStack {
@@ -583,6 +595,8 @@ struct Footer: View {
     @AppStorage(Prefs.showBattery) private var showBattery = false
     @AppStorage(Prefs.showClaude) private var showClaude = true
     @AppStorage(Prefs.showGrok) private var showGrok = true
+    @AppStorage(Prefs.showCodex) private var showCodex = true
+    @AppStorage(Prefs.colorMenuBar) private var colorMenuBar = false
     @AppStorage(Prefs.interval) private var interval = 1.0
     @AppStorage(Prefs.awakeForAgents) private var awakeForAgents = false
     @AppStorage(Prefs.awakeDisplay) private var awakeDisplay = false
@@ -596,8 +610,10 @@ struct Footer: View {
                     Toggle("GPU", isOn: $showGPU)
                     Toggle("Memory", isOn: $showMem)
                     Toggle("Battery", isOn: $showBattery)
-                    Toggle("Claude limits", isOn: $showClaude)
+                    if store.claudeAvailable { Toggle("Claude limits", isOn: $showClaude) }
                     if store.grokAvailable { Toggle("Grok credits", isOn: $showGrok) }
+                    if store.codexAvailable { Toggle("Codex limits", isOn: $showCodex) }
+                    Toggle("Colors", isOn: $colorMenuBar)
                 }
                 Picker("Update every", selection: $interval) {
                     Text("0.5 s").tag(0.5)
@@ -625,7 +641,7 @@ struct Footer: View {
                     Button("For 8 hours") { actions.keepAwake(.hours(8)) }
                     Button("Indefinitely") { actions.keepAwake(.indefinitely) }
                 }
-                Toggle("While Claude Code or Grok works", isOn: $awakeForAgents)
+                Toggle("While Claude Code, Grok or Codex works", isOn: $awakeForAgents)
                 Toggle("Keep display on", isOn: $awakeDisplay)
             } label: {
                 Label(awakeLabel, systemImage: store.awake ? "cup.and.saucer.fill" : "cup.and.saucer")

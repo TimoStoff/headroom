@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let sampler = SystemSampler()
     private let claudeClient = ClaudeLimitsClient()
     private let grokClient = GrokClient()
+    private let codexClient = CodexClient()
     private let bedrockClient = BedrockClient()
     private let ledger = Ledger()
     private let keepAwake = KeepAwake()
@@ -104,7 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func redraw() {
-        statusItem.button?.image = StatusRenderer.render(store)
+        guard let button = statusItem.button else { return }
+        button.image = StatusRenderer.render(store, dark: button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
 
     }
 
@@ -149,6 +151,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             redraw()
         }
+        Task { @MainActor in
+            do {
+                store.codexLimits = try await codexClient.fetch()
+                store.codexError = nil
+                store.codexAvailable = true
+            } catch ClientError.notConfigured {
+                store.codexAvailable = false
+                store.codexLimits = nil
+            } catch {
+                store.codexAvailable = true
+                store.codexError = error.localizedDescription
+            }
+            redraw()
+        }
     }
 
     private func refreshUsage() {
@@ -157,13 +173,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let windowStart = store.claudeLimits?.session?.resetsAt.map { $0.addingTimeInterval(-5 * 3600) }
         ledger.refresh(windowStart: windowStart, progress: { [weak self] msg in
             DispatchQueue.main.async { self?.store.indexing = msg }
-        }, completion: { [weak self] claude, grok, bedrock, opencode, lastActivity in
+        }, completion: { [weak self] claude, grok, bedrock, opencode, codex, lastActivity in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.store.claudeUsage = claude
                 self.store.grokUsage = grok
                 self.store.bedrockLocalUsage = bedrock
                 self.store.opencodeUsage = opencode
+                self.store.codexUsage = codex
                 self.store.usageUpdated = Date()
                 self.ledgerBusy = false
                 self.keepAwake.agentActivity = lastActivity
@@ -281,8 +298,9 @@ extension AppDelegate {
     @MainActor fileprivate func writeSnapshots() {
         guard let dir = snapshotDir else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let strip = StatusRenderer.render(store)
+        var strip = NSImage()
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            strip = StatusRenderer.render(store, dark: appearance == .darkAqua)
             let scale: CGFloat = 4
             let size = NSSize(width: strip.size.width * scale, height: strip.size.height * scale)
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
