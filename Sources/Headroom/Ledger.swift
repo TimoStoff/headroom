@@ -209,6 +209,7 @@ final class Ledger {
 
     private var claudeRoots: [URL] {
         [homeDir.appendingPathComponent(".claude/projects"), homeDir.appendingPathComponent(".config/claude/projects")] + coworkRoots
+            + ClaudeLimitsClient.configDirs().map { $0.appendingPathComponent("projects") }
     }
 
     /// The desktop app runs each Cowork session with its own Claude Code config folder under

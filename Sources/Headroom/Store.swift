@@ -84,6 +84,8 @@ final class Store: ObservableObject {
 
     @Published var claudeLimits: ClaudeLimits?
     @Published var claudeError: String?
+    /// Limits of extra Claude Code logins (CLAUDE_CONFIG_DIR), drawn as more bars in the Claude card.
+    @Published var claudeExtra: [ClaudeLimits] = []
     @Published var claudeUsage: UsageSummary?
     /// Providers start hidden and appear once their account answers; they hide again if not set up.
     @Published var claudeAvailable = false

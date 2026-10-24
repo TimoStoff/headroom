@@ -72,6 +72,8 @@ struct CardHeader: View {
     let icon: String
     let tint: Color
     var trailing: String?
+    /// More tinted chips after `trailing`, one per extra account.
+    var badges: [(text: String, tint: Color)] = []
 
     var body: some View {
         HStack(spacing: 6) {
@@ -84,6 +86,11 @@ struct CardHeader: View {
                 Text(trailing).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Capsule().fill(tint.opacity(0.15)))
+            }
+            ForEach(badges.indices, id: \.self) { i in
+                Text(badges[i].text).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(badges[i].tint.opacity(0.15)))
             }
         }
     }
@@ -137,6 +144,8 @@ struct UsageBar: View {
     let percent: Double
     let tint: Color
     var pace: Double?
+    /// Thinner, with a shorter pace marker, when several bars stack in one row.
+    var stacked = false
 
     var body: some View {
         GeometryReader { g in
@@ -147,37 +156,58 @@ struct UsageBar: View {
                     .frame(width: max(4, g.size.width * min(percent, 100) / 100))
                 if let pace {
                     Rectangle().fill(Color.primary.opacity(0.65))
-                        .frame(width: 1.5, height: g.size.height + 4)
+                        .frame(width: 1.5, height: g.size.height + (stacked ? 2 : 4))
                         .offset(x: g.size.width * min(max(pace, 0), 100) / 100 - 0.75)
                 }
             }
         }
-        .frame(height: 6)
+        .frame(height: stacked ? 4 : 6)
     }
 }
 
 struct LimitRow: View {
-    let entry: LimitEntry
-    let tint: Color
+    /// One bar per account that has this limit; the first one names the row.
+    let bars: [(entry: LimitEntry, tint: Color)]
 
-    private var pace: Double? {
+    init(entry: LimitEntry, tint: Color) { bars = [(entry, tint)] }
+    init(bars: [(entry: LimitEntry, tint: Color)]) { self.bars = bars }
+
+    private func pace(_ entry: LimitEntry) -> Double? {
         guard let w = entry.window, let r = entry.resetsAt else { return nil }
         return (1 - r.timeIntervalSinceNow / w) * 100
     }
 
+    /// With several accounts each reset time takes its account's color.
+    private var resets: Text? {
+        let dated = bars.compactMap { b in b.entry.resetsAt.map { (Fmt.until($0), b.tint) } }
+        guard !dated.isEmpty else { return nil }
+        if bars.count == 1 { return Text("resets in \(dated[0].0)") }
+        return dated.enumerated().reduce(Text("resets in ")) { t, d in
+            t + Text(d.offset > 0 ? " · " : "") + Text(d.element.0).foregroundColor(d.element.1)
+        }
+    }
+
     var body: some View {
+        let entry = bars[0].entry
         VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(entry.name).font(.system(size: 12, weight: .medium))
                 Spacer()
-                Text(Fmt.pct(entry.percent)).font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
-                    .foregroundStyle(Color.severity(entry.percent, base: .primary))
+                ForEach(bars.indices, id: \.self) { i in
+                    Text(Fmt.pct(bars[i].entry.percent)).font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(Color.severity(bars[i].entry.percent, base: bars.count == 1 ? .primary : bars[i].tint))
+                }
             }
-            UsageBar(percent: entry.percent, tint: Color.severity(entry.percent, base: tint), pace: pace)
+            VStack(spacing: 5) {
+                ForEach(bars.indices, id: \.self) { i in
+                    UsageBar(percent: bars[i].entry.percent, tint: Color.severity(bars[i].entry.percent, base: bars[i].tint),
+                             pace: pace(bars[i].entry), stacked: bars.count > 1)
+                }
+            }
             HStack {
                 if let note = entry.note { Text(note) }
                 Spacer()
-                if let r = entry.resetsAt { Text("resets in \(Fmt.until(r))") }
+                resets
             }
             .font(.system(size: 10)).foregroundStyle(.secondary)
         }
@@ -390,12 +420,22 @@ struct BatteryCard: View {
 struct LimitsCard: View {
     @ObservedObject var store: Store
 
+    /// Extra Claude accounts cycle through colors that stay apart from the Claude orange.
+    private static let accountTints: [Color] = [.cpu, .gpu, .mem]
+    private func tint(_ account: Int) -> Color { account == 0 ? .claude : Self.accountTints[(account - 1) % Self.accountTints.count] }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if store.claudeAvailable {
-                CardHeader(title: "Claude Code", icon: "sparkle", tint: .claude, trailing: store.claudeLimits?.plan)
+                CardHeader(title: "Claude Code", icon: "sparkle", tint: .claude, trailing: store.claudeLimits?.plan,
+                           badges: store.claudeExtra.enumerated().map { i, l in
+                               ([l.account, l.plan].compactMap { $0 }.joined(separator: " · "), tint(i + 1))
+                           })
                 if let l = store.claudeLimits {
-                    ForEach(l.all) { LimitRow(entry: $0, tint: .claude) }
+                    let rows = limitRows([l] + store.claudeExtra)
+                    ForEach(rows.indices, id: \.self) { r in
+                        LimitRow(bars: rows[r].map { ($0.entry, tint($0.account)) })
+                    }
                 } else {
                     Text(store.claudeError ?? "Loading limits...").font(.system(size: 11)).foregroundStyle(.secondary)
                 }

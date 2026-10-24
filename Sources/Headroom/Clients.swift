@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // MARK: - Claude plan limits
 
@@ -19,6 +20,19 @@ struct ClaudeLimits {
     var all: [LimitEntry]
     var plan: String?
     var fetchedAt: Date
+    /// Label of an extra Claude Code login, nil for the default one.
+    var account: String?
+}
+
+/// Groups the same limit across accounts by name, in first-seen order, so each row draws one bar per account.
+func limitRows(_ accounts: [ClaudeLimits]) -> [[(account: Int, entry: LimitEntry)]] {
+    var rows: [[(account: Int, entry: LimitEntry)]] = []
+    for (a, l) in accounts.enumerated() {
+        for e in l.all {
+            if let i = rows.firstIndex(where: { $0[0].entry.name == e.name }) { rows[i].append((a, e)) } else { rows.append([(a, e)]) }
+        }
+    }
+    return rows
 }
 
 enum ClientError: LocalizedError {
@@ -62,8 +76,38 @@ private func getJSON(_ url: URL, headers: [String: String]) async throws -> [Str
 final class ClaudeLimitsClient {
     private struct Creds { var token: String; var expiresAt: Date?; var plan: String? }
 
+    private let service: String
+    let account: String?
+
+    init(service: String = "Claude Code-credentials", account: String? = nil) {
+        self.service = service
+        self.account = account
+    }
+
+    /// Extra logins made with CLAUDE_CONFIG_DIR=~/.claude-<name>, labeled with their organization.
+    static func extraAccounts() -> [ClaudeLimitsClient] {
+        configDirs().map { dir in
+            let json = (try? Data(contentsOf: dir.appendingPathComponent(".claude.json")))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let name = json?.dict("oauthAccount")?.string("organizationName") ?? String(dir.lastPathComponent.dropFirst(".claude-".count))
+            return ClaudeLimitsClient(service: keychainService(dir.path), account: name)
+        }
+    }
+
+    static func configDirs() -> [URL] {
+        let fm = FileManager.default
+        return ((try? fm.contentsOfDirectory(at: homeDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.lastPathComponent.hasPrefix(".claude-") && fm.fileExists(atPath: $0.appendingPathComponent(".claude.json").path) }
+            .sorted { $0.path < $1.path }
+    }
+
+    /// Claude Code suffixes the keychain entry of a non-default config folder with the first 8 hex digits of the SHA-256 of its path.
+    static func keychainService(_ path: String) -> String {
+        "Claude Code-credentials-" + SHA256.hash(data: Data(path.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
+    }
+
     private func credentials() -> Creds? {
-        guard let out = runProcess("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]),
+        guard let out = runProcess("/usr/bin/security", ["find-generic-password", "-s", service, "-w"]),
               out.status == 0,
               let json = try? JSONSerialization.jsonObject(with: out.output) as? [String: Any],
               let oauth = json.dict("claudeAiOauth"),
@@ -90,7 +134,7 @@ final class ClaudeLimitsClient {
             "User-Agent": "claude-code/2.1 headroom",
         ])
 
-        var result = ClaudeLimits(all: [], plan: creds.plan, fetchedAt: Date())
+        var result = ClaudeLimits(all: [], plan: creds.plan, fetchedAt: Date(), account: account)
         let limits = json["limits"] as? [[String: Any]] ?? []
         let shares = json["weekly_scoped_shares"] as? [[String: Any]] ?? []
 

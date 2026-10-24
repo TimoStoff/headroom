@@ -134,6 +134,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     store.claudeError = error.localizedDescription
                     if case ClientError.http(429) = error { claudeBackoffUntil = Date().addingTimeInterval(300) }
                 }
+                var extra: [ClaudeLimits] = []
+                for client in ClaudeLimitsClient.extraAccounts() {
+                    do {
+                        extra.append(try await client.fetch())
+                    } catch ClientError.notConfigured {
+                    } catch ClientError.notLoggedIn {
+                    } catch {
+                        // Keep the last reading through a network or rate-limit hiccup.
+                        if let old = store.claudeExtra.first(where: { $0.account == client.account }) { extra.append(old) }
+                    }
+                }
+                store.claudeExtra = extra
                 redraw()
             }
         }
