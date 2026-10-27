@@ -638,6 +638,11 @@ struct Footer: View {
     @AppStorage(Prefs.showGrok) private var showGrok = true
     @AppStorage(Prefs.showCodex) private var showCodex = true
     @AppStorage(Prefs.colorMenuBar) private var colorMenuBar = false
+    @AppStorage(Prefs.planClaude) private var planClaude = true
+    @AppStorage(Prefs.planGrok) private var planGrok = true
+    @AppStorage(Prefs.planCodex) private var planCodex = true
+    @AppStorage(Prefs.planBedrock) private var planBedrock = true
+    @AppStorage(Prefs.planOpenCode) private var planOpenCode = true
     @AppStorage(Prefs.interval) private var interval = 1.0
     @AppStorage(Prefs.awakeForAgents) private var awakeForAgents = false
     @AppStorage(Prefs.awakeDisplay) private var awakeDisplay = false
@@ -656,13 +661,20 @@ struct Footer: View {
                     if store.codexAvailable { Toggle("Codex limits", isOn: $showCodex) }
                     Toggle("Colors", isOn: $colorMenuBar)
                 }
+                Section("Coding plans") {
+                    Toggle("Claude Code", isOn: $planClaude)
+                    Toggle("Grok", isOn: $planGrok)
+                    Toggle("Codex", isOn: $planCodex)
+                    Toggle("AWS Bedrock", isOn: $planBedrock)
+                    Toggle("OpenCode", isOn: $planOpenCode)
+                }
                 Picker("Update every", selection: $interval) {
                     Text("0.5 s").tag(0.5)
                     Text("1 s").tag(1.0)
                     Text("2 s").tag(2.0)
                     Text("5 s").tag(5.0)
                 }
-                Button("AWS Bedrock...", action: actions.configureBedrock)
+                if planBedrock { Button("AWS Bedrock...", action: actions.configureBedrock) }
                 Toggle("Launch at login", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin))
                 Section(appVersion.map { "Headroom \($0)" } ?? "Headroom (development build)") {
                     Button("Check for Updates...", action: actions.checkForUpdates)

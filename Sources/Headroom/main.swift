@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var bedrockBusy = false
     private var currentInterval = 0.0
     private var snapshotDir: URL?
+    private var enabledPlans: Set<String> = []
     private var hover: HoverController?
     private lazy var updater = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: self)
 
@@ -52,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         startSampling()
         sample()
+        enabledPlans = Set(Prefs.plans.filter(Prefs.bool))
         refreshLimits()
         refreshUsage()
         refreshBedrock()
@@ -70,6 +72,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             if Prefs.sampleInterval != currentInterval { startSampling() }
+            let plans = Set(Prefs.plans.filter(Prefs.bool))
+            if plans != enabledPlans {
+                enabledPlans = plans
+                refreshLimits(force: true)
+                refreshUsage()
+                refreshBedrock()
+            }
             syncAwake()
             redraw()
         }
@@ -120,7 +129,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: Limits and usage
 
     private func refreshLimits(force: Bool = false) {
-        if force || Date() >= claudeBackoffUntil {
+        if !Prefs.bool(Prefs.planClaude) {
+            store.claudeAvailable = false
+            store.claudeLimits = nil
+            store.claudeError = nil
+            store.claudeExtra = []
+        } else if force || Date() >= claudeBackoffUntil {
             Task { @MainActor in
                 do {
                     store.claudeLimits = try await claudeClient.fetch()
@@ -149,7 +163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 redraw()
             }
         }
-        Task { @MainActor in
+        if !Prefs.bool(Prefs.planGrok) {
+            store.grokAvailable = false
+            store.grokPlan = nil
+            store.grokError = nil
+        } else { Task { @MainActor in
             do {
                 store.grokPlan = try await grokClient.fetch()
                 store.grokError = nil
@@ -161,8 +179,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 store.grokError = error.localizedDescription
             }
             redraw()
-        }
-        Task { @MainActor in
+        } }
+        if !Prefs.bool(Prefs.planCodex) {
+            store.codexAvailable = false
+            store.codexLimits = nil
+            store.codexError = nil
+        } else { Task { @MainActor in
             do {
                 store.codexLimits = try await codexClient.fetch()
                 store.codexError = nil
@@ -175,7 +197,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 store.codexError = error.localizedDescription
             }
             redraw()
-        }
+        } }
+        redraw()
     }
 
     private func refreshUsage() {
@@ -187,11 +210,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }, completion: { [weak self] claude, grok, bedrock, opencode, codex, lastActivity in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.store.claudeUsage = claude
-                self.store.grokUsage = grok
-                self.store.bedrockLocalUsage = bedrock
-                self.store.opencodeUsage = opencode
-                self.store.codexUsage = codex
+                func on(_ plan: String, _ u: UsageSummary) -> UsageSummary? { Prefs.bool(plan) ? u : nil }
+                self.store.claudeUsage = on(Prefs.planClaude, claude)
+                self.store.grokUsage = on(Prefs.planGrok, grok)
+                self.store.bedrockLocalUsage = on(Prefs.planBedrock, bedrock)
+                self.store.opencodeUsage = on(Prefs.planOpenCode, opencode)
+                self.store.codexUsage = on(Prefs.planCodex, codex)
                 self.store.usageUpdated = Date()
                 self.ledgerBusy = false
                 self.keepAwake.agentActivity = lastActivity
@@ -201,6 +225,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func refreshBedrock() {
+        guard Prefs.bool(Prefs.planBedrock) else {
+            store.bedrockConfig = nil
+            store.bedrockCloud = nil
+            store.bedrockCloudUsage = nil
+            store.bedrockLocalUsage = nil
+            store.bedrockError = nil
+            return
+        }
         guard !bedrockBusy else { return }
         bedrockBusy = true
         store.bedrockConfig = BedrockClient.config()
