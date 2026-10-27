@@ -16,6 +16,13 @@ enum Prefs {
     static let showClaude = "show.claude"
     static let showGrok = "show.grok"
     static let showCodex = "show.codex"
+    /// Coding plans that can be turned off entirely: not fetched, and hidden from the menu bar, cards and token usage.
+    static let planClaude = "plan.claude"
+    static let planGrok = "plan.grok"
+    static let planCodex = "plan.codex"
+    static let planBedrock = "plan.bedrock"
+    static let planOpenCode = "plan.opencode"
+    static let plans = [planClaude, planGrok, planCodex, planBedrock, planOpenCode]
     static let interval = "interval"
     /// Draw the menu bar strip in color instead of as a monochrome template.
     static let colorMenuBar = "menubar.color"
@@ -26,11 +33,12 @@ enum Prefs {
     static let bedrockRegions = "bedrock.regions"
 
     static func register() {
-        UserDefaults.standard.register(defaults: [
+        let defaults: [String: Any] = [
             showCPU: true, showGPU: false, showMem: true, showBattery: false,
             showClaude: true, showGrok: true, showCodex: true, colorMenuBar: false, interval: 1.0,
             awakeForAgents: false, awakeDisplay: false,
-        ])
+        ]
+        UserDefaults.standard.register(defaults: defaults.merging(plans.map { ($0, true) }) { a, _ in a })
     }
 
     static func bool(_ k: String) -> Bool { UserDefaults.standard.bool(forKey: k) }

@@ -36,7 +36,7 @@ One compact, native-looking item in the menu bar. Click it for a dashboard with 
 - AWS Bedrock: account-wide Claude tokens and estimated cost from CloudWatch, or, without AWS access, the Claude Code sessions that ran through Bedrock
 - Combined token usage for Claude Code, Grok and Bedrock: today, last 7 days, last 30 days, tokens and cost, a 30-day chart by model family, and a per-model table, similar to [ccusage](https://github.com/ryoppippi/ccusage)
 
-Providers you do not use are hidden automatically.
+Providers you do not use are hidden automatically. To hide one you do use, turn it off under **Settings > Coding plans**; Headroom then stops fetching it and leaves it out of the menu bar, the dashboard and the token totals.
 
 **Keep awake** (like Amphetamine or `caffeinate`)
 - Keep the Mac from idle sleeping for 1, 2, 4 or 8 hours, or indefinitely, from the cup menu in the dashboard footer
